@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <Description>Turns a GOG installer read by LANCommander.GOG into a LANCommander .lcx package.</Description>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LANCommander.GOG\LANCommander.GOG.csproj" />
+    <!--
+      The SDK is provided by whichever host loads this assembly, so none of it is copied or listed
+      as a runtime dependency. Anything that runs this library outside a host - the tests - has to
+      reference the SDK itself.
+    -->
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.SDK\LANCommander.SDK.csproj" Private="false" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LANCommander.GOG.Tests" />
+    <InternalsVisibleTo Include="LANCommander.Plugins.GOG.Tests" />
+  </ItemGroup>
+
+</Project>

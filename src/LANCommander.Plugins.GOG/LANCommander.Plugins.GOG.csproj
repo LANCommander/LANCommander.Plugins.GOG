@@ -1,0 +1,98 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <Description>Links GOG accounts to a LANCommander server and imports the games they own.</Description>
+    <Version>0.1.0</Version>
+    <IsPackable>false</IsPackable>
+    <!-- An unresolved component tag silently renders as a raw HTML element; fail the build instead -->
+    <WarningsAsErrors>$(WarningsAsErrors);RZ10012</WarningsAsErrors>
+    <!-- Where the Deploy target copies the plugin: the host's data directory. -->
+    <LANCommanderDataDir Condition="'$(LANCommanderDataDir)' == ''">$(LANCommanderRoot)LANCommander.Server\Data\</LANCommanderDataDir>
+    <PluginDeployDirectory>$([MSBuild]::EnsureTrailingSlash('$(LANCommanderDataDir)'))Plugins\$(AssemblyName)\</PluginDeployDirectory>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <SupportedPlatform Include="browser" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\LANCommander.GOG\LANCommander.GOG.csproj" />
+    <ProjectReference Include="..\LANCommander.GOG.Packaging\LANCommander.GOG.Packaging.csproj" />
+  </ItemGroup>
+
+  <!--
+    Host assemblies. The server loads these itself, and a plugin that shipped its own copies would
+    load them a second time into its own load context, where none of their types would be the
+    host's. They are compile-time references only: KeepOnlyPluginFiles below strips them, and
+    every package they bring with them, from the output. contentfiles is excluded so the host's
+    PowerShell modules are not added to the project as content.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.SDK\LANCommander.SDK.csproj" Private="false" ExcludeAssets="contentfiles" />
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.Plugins\LANCommander.Server.Plugins.csproj" Private="false" ExcludeAssets="contentfiles" />
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.Services\LANCommander.Server.Services.csproj" Private="false" ExcludeAssets="contentfiles" />
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.ImportExport\LANCommander.Server.ImportExport.csproj" Private="false" ExcludeAssets="contentfiles" />
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.UI\LANCommander.Server.UI.csproj" Private="false" ExcludeAssets="contentfiles" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <!-- Copies the plugin's NuGet dependencies to the output, as a plugin needs. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <!--
+      A .deps.json would describe the host's whole dependency graph, most of which is deliberately
+      not shipped. Without one, the plugin's load context resolves from the plugin folder alone and
+      leaves everything else to the host.
+    -->
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <PreserveCompilationContext>false</PreserveCompilationContext>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The assemblies the drop-in folder carries. Everything else in the output is removed. -->
+    <PluginAssembly Include="$(AssemblyName);LANCommander.GOG;LANCommander.GOG.Packaging;SharpCompress" />
+  </ItemGroup>
+
+  <!--
+    The host's assemblies and packages arrive in the output by several routes (project references
+    flow transitively, and dynamic loading copies every package). Rather than chase each one, the
+    output is cut back to the plugin's own files once everything has been copied.
+  -->
+  <Target Name="KeepOnlyPluginFiles" AfterTargets="CopyFilesToOutputDirectory">
+    <PropertyGroup>
+      <_PluginAssemblyNames>;@(PluginAssembly);</_PluginAssemblyNames>
+    </PropertyGroup>
+    <ItemGroup>
+      <_PluginOutputFile Include="$(OutDir)**\*" />
+      <_PluginStrayFile Include="@(_PluginOutputFile)" Condition="'%(RecursiveDir)' != '' or !$(_PluginAssemblyNames.Contains(';%(Filename);'))" />
+    </ItemGroup>
+    <Delete Files="@(_PluginStrayFile)" />
+    <!-- The plugin ships nothing in subdirectories, so they all go. -->
+    <RemoveDir Directories="$([System.IO.Directory]::GetDirectories('$(OutDir)'))" />
+
+    <ItemGroup>
+      <_PluginUnexpectedAssembly Include="$(OutDir)*.dll" Exclude="@(PluginAssembly->'$(OutDir)%(Identity).dll')" />
+      <_PluginMissingAssembly Include="@(PluginAssembly)" Condition="!Exists('$(OutDir)%(Identity).dll')" />
+    </ItemGroup>
+    <Error Condition="'@(_PluginUnexpectedAssembly)' != ''" Text="Unexpected assemblies in the plugin output: @(_PluginUnexpectedAssembly->'%(Filename)%(Extension)', ', ')" />
+    <Error Condition="'@(_PluginMissingAssembly)' != ''" Text="Assemblies missing from the plugin output: @(_PluginMissingAssembly->'%(Identity).dll', ', ')" />
+  </Target>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="LANCommander.Plugins.GOG.Tests" />
+  </ItemGroup>
+
+  <!-- dotnet build -t:Deploy copies the plugin into the host's Plugins folder. -->
+  <Target Name="Deploy" DependsOnTargets="Build">
+    <ItemGroup>
+      <_PluginFile Include="$(OutDir)*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_PluginFile)" DestinationFiles="@(_PluginFile->'$(PluginDeployDirectory)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="Deployed $(AssemblyName) to $(PluginDeployDirectory)" />
+  </Target>
+
+</Project>

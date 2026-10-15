@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/Configuration/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path="README.md" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/LANCommander.GOG/LANCommander.GOG.csproj" />
+    <Project Path="src/LANCommander.GOG.Packaging/LANCommander.GOG.Packaging.csproj" />
+    <Project Path="src/LANCommander.Plugins.GOG/LANCommander.Plugins.GOG.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LANCommander.GOG.Tests/LANCommander.GOG.Tests.csproj" />
+    <Project Path="tests/LANCommander.Plugins.GOG.Tests/LANCommander.Plugins.GOG.Tests.csproj" />
+  </Folder>
+</Solution>

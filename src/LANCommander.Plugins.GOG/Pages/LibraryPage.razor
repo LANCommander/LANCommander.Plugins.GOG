@@ -1,0 +1,235 @@
+@page "/Plugins/GOG"
+@implements IDisposable
+@inject GogAccountStore Accounts
+@inject GogLibraryService Library
+@inject GogImportJobService Jobs
+@inject GogImportMapStore Imported
+@inject GogSettingsStore Settings
+@inject IGogStorageLocations StorageLocations
+@inject NotificationService Notifications
+
+<PageHeader Title="GOG" Subtitle="Import games from linked GOG accounts">
+    <Extra>
+        <Button Icon="IconType.ArrowClockwise" OnClick="() => LoadAsync(refresh: true)" Loading="_loading" Disabled="_accounts.Count == 0">Refresh</Button>
+    </Extra>
+</PageHeader>
+
+<PageContent>
+    <GogSectionNav Current="@GogRoutes.Library" />
+
+    @if (_accounts.Count == 0)
+    {
+        <Empty Title="No GOG accounts linked" Description="Link a GOG account to see the games it owns." Icon="IconType.Storefront">
+            <Button Primary Href="@GogRoutes.Accounts" Icon="IconType.SignIn">Link an account</Button>
+        </Empty>
+    }
+    else
+    {
+        @foreach (var problem in _problems)
+        {
+            <Alert Warning Style="margin-bottom: 12px">@problem</Alert>
+        }
+
+        <Table TItem="GogOwnedProduct"
+               Items="_games"
+               Key="game => game.ProductId"
+               Selectable
+               @bind-Values="_selected"
+               RowSelectable="CanImport"
+               Searchable
+               SearchText="game => game.Title"
+               SearchPlaceholder="Search games"
+               ShowTotal
+               PageSize="50"
+               EmptyText="@(_loading ? "Reading library" : "No games found")"
+               SettingsKey="plugin-gog-library">
+            <LeftToolbar>
+                <Flex Gap="Gap.Small" Align="Align.Center" Wrap>
+                    <Select TValue="Guid" Items="_accountItems" Value="_accountId" ValueChanged="AccountChangedAsync" aria-label="Account" Style="min-width: 180px" />
+                    <Select TValue="string" Items="_languageItems" @bind-Value="_language" aria-label="Installer language" Style="min-width: 150px" />
+                    <Select TValue="Guid" Items="_storageItems" @bind-Value="_storageLocationId" aria-label="Storage location" Style="min-width: 200px" />
+                    <Button Primary Icon="IconType.DownloadSimple" OnClick="ImportSelected" Disabled="_selected.Count == 0">
+                        Import @(_selected.Count > 0 ? _selected.Count.ToString(CultureInfo.CurrentCulture) : "") selected
+                    </Button>
+                </Flex>
+            </LeftToolbar>
+            <Columns>
+                <TemplateColumn TItem="GogOwnedProduct" Title="Cover" Width="110px" HideTitle>
+                    @if (context.ImageUrl is { } image)
+                    {
+                        <Image Src="@image" Alt="@context.Title" Width="98" Height="55" Cover Rounded />
+                    }
+                </TemplateColumn>
+                <TemplateColumn TItem="GogOwnedProduct" Title="Title">
+                    <Flex Vertical Gap="Gap.None">
+                        <Typography Strong>@context.Title</Typography>
+                        <Typography Secondary Small>
+                            @Platforms(context)
+                            @if (_accountId == Guid.Empty && _accounts.Count > 1)
+                            {
+                                <text> · @AccountName(context.AccountId)</text>
+                            }
+                        </Typography>
+                    </Flex>
+                </TemplateColumn>
+                <TemplateColumn TItem="GogOwnedProduct" Title="Status" Width="220px">
+                    @if (ActiveJob(context.ProductId) is { } job)
+                    {
+                        <Tag Info Small Icon="IconType.CloudArrowDown">@GogFormat.StageLabel(job.Stage)</Tag>
+                    }
+                    else if (_imported.GetValueOrDefault(context.ProductId) is { } record)
+                    {
+                        <a href="@($"/Games/{record.GameId}")"><Tag Success Small>Imported @record.Version</Tag></a>
+                    }
+                    else if (!context.Windows)
+                    {
+                        <Tag Small>No Windows installer</Tag>
+                    }
+                </TemplateColumn>
+            </Columns>
+        </Table>
+    }
+</PageContent>
+
+@code {
+    IReadOnlyList<GogAccount> _accounts = [];
+    IReadOnlyList<GogOwnedProduct> _games = [];
+    IReadOnlyList<string> _problems = [];
+    IList<GogOwnedProduct> _selected = new List<GogOwnedProduct>();
+    IReadOnlyDictionary<string, GogImportRecord> _imported = new Dictionary<string, GogImportRecord>();
+    IReadOnlyList<GogImportJobSnapshot> _jobs = [];
+
+    List<SelectItem<Guid>> _accountItems = [];
+    List<SelectItem<Guid>> _storageItems = [];
+    readonly List<SelectItem<string>> _languageItems = GogFormat.Languages.Select(language => new SelectItem<string>(language.Code, language.Name)).ToList();
+
+    Guid _accountId = Guid.Empty;
+    string _language = "en";
+    Guid _storageLocationId = Guid.Empty;
+    bool _loading;
+    CancellationTokenSource _cancellation = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        Jobs.Changed += OnStateChanged;
+        Imported.Changed += OnStateChanged;
+
+        var settings = Settings.Current;
+
+        _language = settings.DefaultLanguage;
+        _accounts = Accounts.GetAll();
+        _accountItems = [new SelectItem<Guid>(Guid.Empty, "All accounts"), .. _accounts.Select(account => new SelectItem<Guid>(account.Id, account.Username))];
+        _imported = Imported.GetAll();
+        _jobs = Jobs.Jobs;
+
+        try
+        {
+            var locations = await StorageLocations.GetArchiveLocationsAsync();
+
+            _storageItems = locations.Select(location => new SelectItem<Guid>(location.Id, location.Default ? $"{location.Path} (default)" : location.Path)).ToList();
+            _storageLocationId = locations.FirstOrDefault(location => location.Id == settings.DefaultStorageLocationId)?.Id
+                                 ?? locations.FirstOrDefault(location => location.Default)?.Id
+                                 ?? locations.FirstOrDefault()?.Id
+                                 ?? Guid.Empty;
+        }
+        catch (Exception exception)
+        {
+            Notifications.Error(exception, "Could not read the storage locations");
+        }
+
+        if (_accounts.Count > 0)
+            await LoadAsync(refresh: false);
+    }
+
+    async Task AccountChangedAsync(Guid accountId)
+    {
+        _accountId = accountId;
+        _selected = new List<GogOwnedProduct>();
+
+        await LoadAsync(refresh: false);
+    }
+
+    async Task LoadAsync(bool refresh)
+    {
+        _loading = true;
+
+        try
+        {
+            (_games, _problems) = await Library.GetOwnedGamesAsync(_accountId == Guid.Empty ? null : _accountId, refresh, _cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Notifications.Error(exception, "Could not read the GOG library");
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    void ImportSelected()
+    {
+        var queued = 0;
+        var skipped = new List<string>();
+
+        foreach (var game in _selected)
+        {
+            try
+            {
+                Jobs.Enqueue(new GogImportRequest(
+                    game.AccountId,
+                    game.ProductId,
+                    game.Title,
+                    _language,
+                    _storageLocationId == Guid.Empty ? null : _storageLocationId));
+
+                queued++;
+            }
+            catch (InvalidOperationException)
+            {
+                skipped.Add(game.Title);
+            }
+        }
+
+        _selected = new List<GogOwnedProduct>();
+
+        if (queued > 0)
+            Notifications.Success(
+                queued == 1 ? "Queued 1 game for import" : $"Queued {queued} games for import",
+                action: new NotificationAction("View imports", GogRoutes.Imports));
+
+        if (skipped.Count > 0)
+            Notifications.Warning("Already importing", string.Join(", ", skipped));
+    }
+
+    bool CanImport(GogOwnedProduct game) => game.Windows && ActiveJob(game.ProductId) is null;
+
+    GogImportJobSnapshot? ActiveJob(string productId)
+        => _jobs.FirstOrDefault(job => job.ProductId == productId && job.Stage.IsActive());
+
+    string AccountName(Guid accountId) => _accounts.FirstOrDefault(account => account.Id == accountId)?.Username ?? "";
+
+    static string Platforms(GogOwnedProduct game)
+        => string.Join(", ", new[] { game.Windows ? "Windows" : null, game.Mac ? "macOS" : null, game.Linux ? "Linux" : null }.OfType<string>());
+
+    void OnStateChanged()
+        => InvokeAsync(() =>
+        {
+            _jobs = Jobs.Jobs;
+            _imported = Imported.GetAll();
+
+            StateHasChanged();
+        });
+
+    public void Dispose()
+    {
+        Jobs.Changed -= OnStateChanged;
+        Imported.Changed -= OnStateChanged;
+
+        _cancellation.Cancel();
+        _cancellation.Dispose();
+    }
+}

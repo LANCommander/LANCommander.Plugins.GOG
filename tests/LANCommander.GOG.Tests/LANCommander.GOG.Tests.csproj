@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\LANCommander.GOG\LANCommander.GOG.csproj" />
+    <!-- Everything that maps an installer onto the SDK lives in the packaging library, because the
+         library itself is held to having no dependencies at all. -->
+    <ProjectReference Include="..\..\src\LANCommander.GOG.Packaging\LANCommander.GOG.Packaging.csproj" />
+    <!-- The packaging library leaves the SDK to its host; here, the tests are the host. -->
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.SDK\LANCommander.SDK.csproj" />
+  </ItemGroup>
+
+</Project>

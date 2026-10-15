@@ -1,0 +1,108 @@
+@page "/Plugins/GOG/Settings"
+@inject GogSettingsStore Store
+@inject IGogStorageLocations StorageLocations
+@inject NotificationService Notifications
+
+<PageHeader Title="GOG" Subtitle="Settings" />
+
+<PageContent>
+    <GogSectionNav Current="@GogRoutes.Settings" />
+
+    <Form Model="_model" OnSubmit="Save" Loading="_saving">
+        <FormItem Label="Work directory" Help="@($"Downloads, extracted games and packages are kept here while an import runs. Each import needs room for its installer, the extracted game and the package at once. Leave empty to use {Store.WorkDirectory}.")">
+            <TextInput @bind-Value="_model.WorkDirectory" Placeholder="@Store.WorkDirectory" />
+        </FormItem>
+
+        <FormItem Label="Imports at once" Help="Takes effect when the server restarts.">
+            <NumberInput TValue="int" @bind-Value="_model.MaxConcurrentImports" Min="1" Max="8" />
+        </FormItem>
+
+        <FormItem Label="Default installer language" Help="Offered first in the library. An import falls back to English, then to any language, when a game has no installer in the one asked for.">
+            <Select TValue="string" Items="_languageItems" @bind-Value="_model.DefaultLanguage" />
+        </FormItem>
+
+        <FormItem Label="Default storage location">
+            <Select TValue="Guid" Items="_storageItems" @bind-Value="_model.DefaultStorageLocationId" />
+        </FormItem>
+
+        <FormItem Label="Verify checksums" Help="Check downloads against the checksums GOG publishes, and extracted files against those the installer records.">
+            <Switch @bind-Value="_model.VerifyChecksums" />
+        </FormItem>
+
+        <FormItem Label="Keep work files" Help="Leave each import's downloads and extracted files in the work directory afterwards, for troubleshooting.">
+            <Switch @bind-Value="_model.KeepWorkFiles" />
+        </FormItem>
+
+        <FormItem>
+            <Button Primary Submit>Save</Button>
+        </FormItem>
+    </Form>
+</PageContent>
+
+@code {
+    readonly SettingsModel _model = new();
+    readonly List<SelectItem<string>> _languageItems = GogFormat.Languages.Select(language => new SelectItem<string>(language.Code, language.Name)).ToList();
+    List<SelectItem<Guid>> _storageItems = [new(Guid.Empty, "The server's default")];
+    bool _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var current = Store.Current;
+
+        _model.WorkDirectory = current.WorkDirectory;
+        _model.MaxConcurrentImports = current.MaxConcurrentImports;
+        _model.DefaultLanguage = current.DefaultLanguage;
+        _model.DefaultStorageLocationId = current.DefaultStorageLocationId ?? Guid.Empty;
+        _model.VerifyChecksums = current.VerifyChecksums;
+        _model.KeepWorkFiles = current.KeepWorkFiles;
+
+        try
+        {
+            var locations = await StorageLocations.GetArchiveLocationsAsync();
+
+            _storageItems = [.. _storageItems, .. locations.Select(location => new SelectItem<Guid>(location.Id, location.Path))];
+        }
+        catch (Exception exception)
+        {
+            Notifications.Error(exception, "Could not read the storage locations");
+        }
+    }
+
+    void Save()
+    {
+        _saving = true;
+
+        try
+        {
+            Store.Save(new GogPluginSettings
+            {
+                WorkDirectory = _model.WorkDirectory,
+                MaxConcurrentImports = _model.MaxConcurrentImports,
+                DefaultLanguage = _model.DefaultLanguage ?? "en",
+                DefaultStorageLocationId = _model.DefaultStorageLocationId == Guid.Empty ? null : _model.DefaultStorageLocationId,
+                VerifyChecksums = _model.VerifyChecksums,
+                KeepWorkFiles = _model.KeepWorkFiles,
+            });
+
+            Notifications.Success("GOG settings saved");
+        }
+        catch (Exception exception)
+        {
+            Notifications.Error(exception, "Could not save the GOG settings");
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    sealed class SettingsModel
+    {
+        public string? WorkDirectory { get; set; }
+        public int MaxConcurrentImports { get; set; } = 1;
+        public string? DefaultLanguage { get; set; } = "en";
+        public Guid DefaultStorageLocationId { get; set; }
+        public bool VerifyChecksums { get; set; } = true;
+        public bool KeepWorkFiles { get; set; }
+    }
+}

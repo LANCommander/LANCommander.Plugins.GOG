@@ -1,0 +1,131 @@
+@page "/Plugins/GOG/Accounts"
+@implements IDisposable
+@inject GogAccountStore Accounts
+@inject GogAccountLinker Linker
+@inject GogLibraryCache LibraryCache
+@inject NotificationService Notifications
+
+<PageHeader Title="GOG" Subtitle="Accounts" />
+
+<PageContent>
+    <GogSectionNav Current="@GogRoutes.Accounts" />
+
+    <Flex Vertical Gap="Gap.Large">
+        <Card Title="Link an account">
+            <Flex Vertical Gap="Gap.Medium">
+                <Typography>
+                    GOG only lets its own client sign in, so linking an account takes a copy and paste:
+                </Typography>
+                <ol style="margin: 0 0 0 20px; padding: 0">
+                    <li>Open the GOG sign-in page and sign in with the account you want to link.</li>
+                    <li>GOG then shows a mostly blank page. Copy its full address from the browser's address bar. It begins with <Typography Code>https://embed.gog.com/on_login_success</Typography> and contains <Typography Code>code=</Typography>.</li>
+                    <li>Paste the address below and link the account. The code in it only works once and expires after a few minutes.</li>
+                </ol>
+                <Flex Gap="Gap.Small" Align="Align.Center" Wrap>
+                    <Button Href="@GogAuthClient.LoginUrl" NewTab Icon="IconType.SignIn">Open GOG sign-in</Button>
+                    <TextInput @bind-Value="_pasted" Immediate Placeholder="https://embed.gog.com/on_login_success?origin=client&code=..." Style="flex: 1; min-width: 320px" OnEnter="LinkAsync" aria-label="Address after signing in" />
+                    <Button Primary OnClick="LinkAsync" Loading="_linking" Disabled="string.IsNullOrWhiteSpace(_pasted)">Link account</Button>
+                </Flex>
+                @if (_error is not null)
+                {
+                    <Alert Danger>@_error</Alert>
+                }
+            </Flex>
+        </Card>
+
+        <Table TItem="GogAccount" Items="_accounts" Key="account => account.Id" NoPaging EmptyText="No accounts linked yet" SettingsKey="plugin-gog-accounts">
+            <Columns>
+                <TemplateColumn TItem="GogAccount" Title="Account">
+                    <Flex Gap="Gap.Small" Align="Align.Center">
+                        <Avatar Src="@context.AvatarUrl" Name="@context.Username" ColorKey="@context.UserId" Small />
+                        <Typography Strong>@context.Username</Typography>
+                    </Flex>
+                </TemplateColumn>
+                <TemplateColumn TItem="GogAccount" Title="Status">
+                    @if (context.NeedsReauthentication)
+                    {
+                        <Flex Vertical Gap="Gap.None">
+                            <span><Tag Small Warning>Sign in again</Tag></span>
+                            @if (!string.IsNullOrEmpty(context.LastError))
+                            {
+                                <Typography Secondary Small>@context.LastError</Typography>
+                            }
+                        </Flex>
+                    }
+                    else
+                    {
+                        <Tag Small Success>Linked</Tag>
+                    }
+                </TemplateColumn>
+                <TemplateColumn TItem="GogAccount" Title="Linked" Width="200px">
+                    <LocalTime Value="context.LinkedOn.UtcDateTime" />
+                </TemplateColumn>
+                <ActionsColumn TItem="GogAccount">
+                    <Popconfirm OnConfirm="() => Remove(context)" Title="@($"Unlink {context.Username}?")" Description="Games already imported stay in LANCommander." OkText="Unlink" Danger>
+                        <Button Text Danger Icon="IconType.Trash" title="Unlink" />
+                    </Popconfirm>
+                </ActionsColumn>
+            </Columns>
+        </Table>
+    </Flex>
+</PageContent>
+
+@code {
+    IReadOnlyList<GogAccount> _accounts = [];
+    string? _pasted;
+    string? _error;
+    bool _linking;
+
+    protected override void OnInitialized()
+    {
+        _accounts = Accounts.GetAll();
+
+        Accounts.Changed += OnAccountsChanged;
+    }
+
+    async Task LinkAsync()
+    {
+        if (_linking || string.IsNullOrWhiteSpace(_pasted))
+            return;
+
+        _linking = true;
+        _error = null;
+
+        try
+        {
+            var account = await Linker.LinkAsync(_pasted);
+
+            LibraryCache.Invalidate(account.Id);
+
+            _pasted = null;
+
+            Notifications.Success($"Linked {account.Username}");
+        }
+        catch (Exception exception) when (exception is ArgumentException or GogAuthenticationException or GogApiException or HttpRequestException)
+        {
+            _error = exception.Message;
+        }
+        finally
+        {
+            _linking = false;
+        }
+    }
+
+    void Remove(GogAccount account)
+    {
+        Accounts.Remove(account.Id);
+        LibraryCache.Invalidate(account.Id);
+
+        Notifications.Success($"Unlinked {account.Username}");
+    }
+
+    void OnAccountsChanged()
+        => InvokeAsync(() =>
+        {
+            _accounts = Accounts.GetAll();
+
+            StateHasChanged();
+        });
+
+    public void Dispose() => Accounts.Changed -= OnAccountsChanged;
+}

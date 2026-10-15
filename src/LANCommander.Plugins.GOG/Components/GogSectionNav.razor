@@ -1,0 +1,21 @@
+@* Moves between the plugin's pages, which share a single entry in the server's navigation. *@
+
+<Flex Gap="Gap.Small" Wrap Style="margin-bottom: 16px">
+    @foreach (var (href, label, icon) in Sections)
+    {
+        <Button Href="@href" Icon="icon" Primary="@(href == Current)" Text="@(href != Current)">@label</Button>
+    }
+</Flex>
+
+@code {
+    /// <summary>The route of the page this sits on.</summary>
+    [Parameter, EditorRequired] public string Current { get; set; } = GogRoutes.Library;
+
+    static readonly (string Href, string Label, IconType Icon)[] Sections =
+    [
+        (GogRoutes.Library, "Library", IconType.Storefront),
+        (GogRoutes.Imports, "Imports", IconType.ListChecks),
+        (GogRoutes.Accounts, "Accounts", IconType.UserCircle),
+        (GogRoutes.Settings, "Settings", IconType.Gear),
+    ];
+}

@@ -1,0 +1,21 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!--
+      The host projects referenced through LANCommanderRoot resolve their versions from the host's
+      own Directory.Packages.props, so nothing here has to repeat them. Versions that a plugin
+      dependency shares with the host are kept identical to the host's on purpose.
+    -->
+  </PropertyGroup>
+  <ItemGroup Label="Runtime">
+    <!-- Matches the host. The plugin ships its own copy, but there is no reason for them to differ. -->
+    <PackageVersion Include="SharpCompress" Version="0.50.0" />
+  </ItemGroup>
+  <ItemGroup Label="Testing">
+    <PackageVersion Include="bunit" Version="2.9.0" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.0.1" />
+  </ItemGroup>
+</Project>

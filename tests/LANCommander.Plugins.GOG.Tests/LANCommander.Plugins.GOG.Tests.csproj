@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="bunit" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\LANCommander.Plugins.GOG\LANCommander.Plugins.GOG.csproj" />
+    <!-- The plugin leaves these to its host; here, the tests are the host. -->
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.SDK\LANCommander.SDK.csproj" />
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.Plugins\LANCommander.Server.Plugins.csproj" />
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.Services\LANCommander.Server.Services.csproj" />
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.ImportExport\LANCommander.Server.ImportExport.csproj" />
+    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.UI\LANCommander.Server.UI.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Where the plugin's own build put its drop-in folder, for the load test. -->
+    <AssemblyMetadata Include="PluginOutputDirectory" Value="$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\src\LANCommander.Plugins.GOG\bin\$(Configuration)\$(TargetFramework)\'))" />
+  </ItemGroup>
+
+</Project>

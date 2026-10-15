@@ -1,0 +1,121 @@
+@page "/Plugins/GOG/Imports"
+@implements IDisposable
+@inject GogImportJobService Jobs
+
+<PageHeader Title="GOG" Subtitle="Imports">
+    <Extra>
+        <Button Icon="IconType.Trash" OnClick="() => Jobs.ClearFinished()" Disabled="!_jobs.Any(job => job.Stage.IsFinished())">Clear finished</Button>
+    </Extra>
+</PageHeader>
+
+<PageContent>
+    <GogSectionNav Current="@GogRoutes.Imports" />
+
+    <Table TItem="GogImportJobSnapshot" Items="_jobs" Key="job => job.Id" NoPaging EmptyText="Nothing has been imported yet" SettingsKey="plugin-gog-imports">
+        <Columns>
+            <TemplateColumn TItem="GogImportJobSnapshot" Title="Game">
+                <Flex Vertical Gap="Gap.None">
+                    <Typography Strong>@context.Title</Typography>
+                    <Typography Secondary Small>
+                        @(context.InstallerVersion is { Length: > 0 } version ? $"{version} · " : "")@context.Language · queued <LocalTime Value="context.CreatedOn.UtcDateTime" />
+                    </Typography>
+                </Flex>
+            </TemplateColumn>
+            <TemplateColumn TItem="GogImportJobSnapshot" Title="Status" Width="130px">
+                <Tag Small Success="@(context.Stage == GogImportStage.Completed)" Danger="@(context.Stage == GogImportStage.Failed)" Info="@(context.Stage.IsActive() && context.Stage != GogImportStage.Queued)">
+                    @GogFormat.StageLabel(context.Stage)
+                </Tag>
+            </TemplateColumn>
+            <TemplateColumn TItem="GogImportJobSnapshot" Title="Progress" Width="40%">
+                @if (context.Stage.IsActive() && context.Stage != GogImportStage.Queued)
+                {
+                    <Flex Vertical Gap="Gap.None">
+                        <Progress Value="@((context.Progress ?? 0) * 100)" Indeterminate="context.Progress is null" NoValue="context.Progress is null" />
+                        <Typography Secondary Small>@Detail(context)</Typography>
+                    </Flex>
+                }
+                else if (context.Stage == GogImportStage.Failed)
+                {
+                    <Typography Danger Small>@context.Error</Typography>
+                }
+                else if (context.Stage == GogImportStage.Completed && context.CompletedOn is { } completed && context.StartedOn is { } started)
+                {
+                    <Typography Secondary Small>Finished in @GogFormat.Duration(completed - started)</Typography>
+                }
+
+                @if (context.Warnings.Count > 0)
+                {
+                    <details style="margin-top: 4px">
+                        <summary><Typography Warning Small>@(context.Warnings.Count == 1 ? "1 warning" : $"{context.Warnings.Count} warnings")</Typography></summary>
+                        <ul style="margin: 4px 0 0 16px; padding: 0">
+                            @foreach (var warning in context.Warnings)
+                            {
+                                <li><Typography Small>@warning</Typography></li>
+                            }
+                        </ul>
+                    </details>
+                }
+            </TemplateColumn>
+            <ActionsColumn TItem="GogImportJobSnapshot" Width="160px">
+                @if (context.Stage == GogImportStage.Completed && context.GameId is { } gameId)
+                {
+                    <Button Text Small Href="@($"/Games/{gameId}")">Open game</Button>
+                }
+                @if (context.Stage.IsActive())
+                {
+                    <Button Text Small Danger Icon="IconType.X" OnClick="() => Jobs.Cancel(context.Id)">Cancel</Button>
+                }
+                @if (context.Stage is GogImportStage.Failed or GogImportStage.Cancelled)
+                {
+                    <Button Text Small Icon="IconType.ArrowClockwise" OnClick="() => Jobs.Retry(context.Id)">Retry</Button>
+                }
+                @if (context.Stage.IsFinished())
+                {
+                    <Button Text Small Icon="IconType.Trash" title="Remove" OnClick="() => Jobs.Remove(context.Id)" />
+                }
+            </ActionsColumn>
+        </Columns>
+    </Table>
+</PageContent>
+
+@code {
+    IReadOnlyList<GogImportJobSnapshot> _jobs = [];
+
+    protected override void OnInitialized()
+    {
+        _jobs = Jobs.Jobs;
+
+        Jobs.Changed += OnJobsChanged;
+    }
+
+    static string Detail(GogImportJobSnapshot job)
+    {
+        var parts = new List<string>();
+
+        if (!string.IsNullOrEmpty(job.Message))
+            parts.Add(job.Message);
+
+        if (job.Stage == GogImportStage.Downloading && job.BytesTotal > 0)
+        {
+            parts.Add($"{GogFormat.Bytes(job.BytesCompleted)} of {GogFormat.Bytes(job.BytesTotal)}");
+
+            if (job.BytesPerSecond is > 0 and var speed)
+            {
+                parts.Add($"{GogFormat.Bytes(speed)}/s");
+                parts.Add($"{GogFormat.Duration(TimeSpan.FromSeconds((job.BytesTotal - job.BytesCompleted) / speed))} left");
+            }
+        }
+
+        return string.Join(" · ", parts);
+    }
+
+    void OnJobsChanged()
+        => InvokeAsync(() =>
+        {
+            _jobs = Jobs.Jobs;
+
+            StateHasChanged();
+        });
+
+    public void Dispose() => Jobs.Changed -= OnJobsChanged;
+}
