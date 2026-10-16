@@ -37,7 +37,7 @@ public class PluginLoadingTests : IDisposable
         var services = new ServiceCollection();
         var loader = new PluginLoaderService();
 
-        loader.DiscoverAndConfigure(services, PluginHost.Server, Deploy(), "1.1.0", NullLogger.Instance);
+        loader.DiscoverAndConfigure(services, PluginHost.Server, Deploy(), "2.2.0", NullLogger.Instance);
 
         var manifest = Assert.Single(loader.LoadedPlugins);
 
@@ -68,6 +68,19 @@ public class PluginLoadingTests : IDisposable
                 AssemblyLoadContext.GetLoadContext(loaded) == expected,
                 $"{reference.Name} loaded into {AssemblyLoadContext.GetLoadContext(loaded)?.Name}");
         }
+    }
+
+    [Theory]
+    [InlineData("2.1.16", false)]
+    [InlineData("2.2.0-alpha", true)]
+    [InlineData("2.2.0", true)]
+    public void TheServerSkipsThePluginWhenItPredatesTheHostServices(string hostVersion, bool loads)
+    {
+        var loader = new PluginLoaderService();
+
+        loader.DiscoverAndConfigure(new ServiceCollection(), PluginHost.Server, Deploy(), hostVersion, NullLogger.Instance);
+
+        Assert.Equal(loads, loader.LoadedPlugins.Count == 1);
     }
 
     [Fact]

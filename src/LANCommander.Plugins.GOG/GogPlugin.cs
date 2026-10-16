@@ -11,7 +11,8 @@ using Microsoft.Extensions.Logging;
 [assembly: LANCommanderPlugin(
     typeof(LANCommander.Plugins.GOG.GogPlugin),
     Id = LANCommander.Plugins.GOG.GogPlugin.PluginId,
-    MinHostVersion = "1.1.0",
+    // IPackageImporter and IStorageLocationProvider arrived in 2.2.0; -0 admits its prereleases
+    MinHostVersion = "2.2.0-0",
     Hosts = PluginHost.Server)]
 
 namespace LANCommander.Plugins.GOG;
