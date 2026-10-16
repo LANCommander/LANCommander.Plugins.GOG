@@ -5,14 +5,4 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
-
-  <PropertyGroup>
-    <!--
-      The plugin compiles against the host's own projects, so a LANCommander checkout has to sit
-      somewhere on disk. It defaults to a sibling of this repository; override it with
-      -p:LANCommanderRoot=... or an environment variable of the same name.
-    -->
-    <LANCommanderRoot Condition="'$(LANCommanderRoot)' == ''">$(MSBuildThisFileDirectory)..\LANCommander\</LANCommanderRoot>
-    <LANCommanderRoot>$([MSBuild]::EnsureTrailingSlash('$(LANCommanderRoot)'))</LANCommanderRoot>
-  </PropertyGroup>
 </Project>

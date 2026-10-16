@@ -1,10 +1,9 @@
 using System.Reflection;
 using System.Runtime.Loader;
 using LANCommander.Plugins.GOG.Api;
-using LANCommander.Plugins.GOG.Hosting;
 using LANCommander.Plugins.GOG.Jobs;
+using LANCommander.SDK.Enums;
 using LANCommander.SDK.Plugins;
-using LANCommander.Server.ImportExport.Services;
 using LANCommander.Server.Plugins;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -69,11 +68,6 @@ public class PluginLoadingTests : IDisposable
                 AssemblyLoadContext.GetLoadContext(loaded) == expected,
                 $"{reference.Name} loaded into {AssemblyLoadContext.GetLoadContext(loaded)?.Name}");
         }
-
-        // So the import pipeline the plugin calls is the host's own.
-        var importer = routes.Assembly.GetType(typeof(ImportRunnerPackageImporter).FullName!)!;
-
-        Assert.Equal(typeof(ImportRunner), importer.GetConstructors().Single().GetParameters().Single().ParameterType);
     }
 
     [Fact]
@@ -85,7 +79,7 @@ public class PluginLoadingTests : IDisposable
 
         GogPlugin.AddGogServices(services, _ => _directory.PluginPaths);
 
-        services.AddScoped<IGogPackageImporter, NoImporter>();
+        services.AddScoped<IPackageImporter, NoImporter>();
         services.AddHostedService<GogImportWorker>();
 
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
@@ -139,9 +133,12 @@ public class PluginLoadingTests : IDisposable
         }
     }
 
-    private sealed class NoImporter : IGogPackageImporter
+    private sealed class NoImporter : IPackageImporter
     {
-        public Task<Guid> ImportAsync(string packagePath, Guid? storageLocationId, CancellationToken cancellationToken)
+        public Task<PackageImportResult> ImportFileAsync(string packagePath, Guid? storageLocationId = null, ManifestType? manifestType = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<PackageImportResult> ImportStreamAsync(Stream package, Guid? storageLocationId = null, ManifestType? manifestType = null, IProgress<long>? copyProgress = null, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
     }
 }

@@ -5,7 +5,7 @@
 @inject GogImportJobService Jobs
 @inject GogImportMapStore Imported
 @inject GogSettingsStore Settings
-@inject IGogStorageLocations StorageLocations
+@inject IStorageLocationProvider StorageLocations
 @inject NotificationService Notifications
 
 <PageHeader Title="GOG" Subtitle="Import games from linked GOG accounts">
@@ -124,7 +124,7 @@
 
         try
         {
-            var locations = await StorageLocations.GetArchiveLocationsAsync();
+            var locations = await StorageLocations.GetAsync(StorageLocationType.Archive);
 
             _storageItems = locations.Select(location => new SelectItem<Guid>(location.Id, location.Default ? $"{location.Path} (default)" : location.Path)).ToList();
             _storageLocationId = locations.FirstOrDefault(location => location.Id == settings.DefaultStorageLocationId)?.Id

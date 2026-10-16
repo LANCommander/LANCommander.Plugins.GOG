@@ -1,8 +1,9 @@
 using LANCommander.GOG;
 using LANCommander.GOG.Packaging;
 using LANCommander.Plugins.GOG.Api;
-using LANCommander.Plugins.GOG.Hosting;
 using LANCommander.Plugins.GOG.Storage;
+using LANCommander.SDK.Enums;
+using LANCommander.Server.Plugins;
 using Microsoft.Extensions.Logging;
 
 namespace LANCommander.Plugins.GOG.Jobs;
@@ -28,7 +29,7 @@ public sealed class GogImportExecutor(
     GogDownloader downloader,
     GogSettingsStore settings,
     GogImportMapStore imports,
-    IGogPackageImporter importer,
+    IPackageImporter importer,
     ILogger<GogImportExecutor> logger) : IGogImportExecutor
 {
     public const string Author = "LANCommander.Plugins.GOG";
@@ -114,7 +115,7 @@ public sealed class GogImportExecutor(
             // Import
             reporter.Stage(GogImportStage.Importing, "Importing into LANCommander");
 
-            var gameId = await importer.ImportAsync(package, job.StorageLocationId, cancellationToken);
+            var gameId = (await importer.ImportFileAsync(package, job.StorageLocationId, ManifestType.Game, cancellationToken)).RecordId;
 
             imports.Record(new GogImportRecord
             {

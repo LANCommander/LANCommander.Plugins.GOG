@@ -1,10 +1,11 @@
 using System.IO.Compression;
 using System.Net;
 using LANCommander.Plugins.GOG.Api;
-using LANCommander.Plugins.GOG.Hosting;
 using LANCommander.Plugins.GOG.Jobs;
 using LANCommander.Plugins.GOG.Storage;
+using LANCommander.SDK.Enums;
 using LANCommander.SDK.Helpers;
+using LANCommander.Server.Plugins;
 using Microsoft.Extensions.Logging.Abstractions;
 using Sdk = LANCommander.SDK.Models.Manifest;
 
@@ -139,7 +140,7 @@ public class ExecutorTests : IDisposable
 
     private (GogImportExecutor Executor, Guid AccountId, GogImportMapStore Imports, GogSettingsStore Settings) Build(
         FakeHttpHandler handler,
-        IGogPackageImporter importer)
+        IPackageImporter importer)
     {
         var paths = _directory.PluginPaths;
         var accounts = TestServices.Accounts(paths);
@@ -179,13 +180,16 @@ public class ExecutorTests : IDisposable
     }
 
     /// <summary>Opens the package as the server would, and records what it found.</summary>
-    private sealed class RecordingImporter : IGogPackageImporter
+    private sealed class RecordingImporter : IPackageImporter
     {
         public Guid GameId { get; } = Guid.NewGuid();
         public object? Manifest { get; private set; }
         public int ArchiveEntries { get; private set; }
 
-        public Task<Guid> ImportAsync(string packagePath, Guid? storageLocationId, CancellationToken cancellationToken)
+        public Task<PackageImportResult> ImportStreamAsync(Stream package, Guid? storageLocationId = null, ManifestType? manifestType = null, IProgress<long>? copyProgress = null, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<PackageImportResult> ImportFileAsync(string packagePath, Guid? storageLocationId = null, ManifestType? manifestType = null, CancellationToken cancellationToken = default)
         {
             using var package = ZipFile.OpenRead(packagePath);
 
@@ -209,7 +213,7 @@ public class ExecutorTests : IDisposable
                 File.Delete(archive);
             }
 
-            return Task.FromResult(GameId);
+            return Task.FromResult(new PackageImportResult(GameId, ManifestType.Game, 1));
         }
     }
 }

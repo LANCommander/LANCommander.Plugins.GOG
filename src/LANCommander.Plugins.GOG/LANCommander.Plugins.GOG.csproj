@@ -6,8 +6,11 @@
     <IsPackable>false</IsPackable>
     <!-- An unresolved component tag silently renders as a raw HTML element; fail the build instead -->
     <WarningsAsErrors>$(WarningsAsErrors);RZ10012</WarningsAsErrors>
-    <!-- Where the Deploy target copies the plugin: the host's data directory. -->
-    <LANCommanderDataDir Condition="'$(LANCommanderDataDir)' == ''">$(LANCommanderRoot)LANCommander.Server\Data\</LANCommanderDataDir>
+    <!--
+      Where the Deploy target copies the plugin: the host's data directory. Defaults to that of a
+      server run from a LANCommander checkout beside this repository.
+    -->
+    <LANCommanderDataDir Condition="'$(LANCommanderDataDir)' == ''">$(MSBuildThisFileDirectory)..\..\..\LANCommander\LANCommander.Server\Data\</LANCommanderDataDir>
     <PluginDeployDirectory>$([MSBuild]::EnsureTrailingSlash('$(LANCommanderDataDir)'))Plugins\$(AssemblyName)\</PluginDeployDirectory>
   </PropertyGroup>
 
@@ -27,16 +30,13 @@
   <!--
     Host assemblies. The server loads these itself, and a plugin that shipped its own copies would
     load them a second time into its own load context, where none of their types would be the
-    host's. They are compile-time references only: KeepOnlyPluginFiles below strips them, and
-    every package they bring with them, from the output. contentfiles is excluded so the host's
-    PowerShell modules are not added to the project as content.
+    host's. They are compile-time references only. The packages they bring with them still reach
+    the output; KeepOnlyPluginFiles below strips those.
   -->
   <ItemGroup>
-    <ProjectReference Include="$(LANCommanderRoot)LANCommander.SDK\LANCommander.SDK.csproj" Private="false" ExcludeAssets="contentfiles" />
-    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.Plugins\LANCommander.Server.Plugins.csproj" Private="false" ExcludeAssets="contentfiles" />
-    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.Services\LANCommander.Server.Services.csproj" Private="false" ExcludeAssets="contentfiles" />
-    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.ImportExport\LANCommander.Server.ImportExport.csproj" Private="false" ExcludeAssets="contentfiles" />
-    <ProjectReference Include="$(LANCommanderRoot)LANCommander.Server.UI\LANCommander.Server.UI.csproj" Private="false" ExcludeAssets="contentfiles" />
+    <PackageReference Include="LANCommander.SDK" ExcludeAssets="runtime" />
+    <PackageReference Include="LANCommander.Server.Plugins" ExcludeAssets="runtime" />
+    <PackageReference Include="LANCommander.Server.UI" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <PropertyGroup>

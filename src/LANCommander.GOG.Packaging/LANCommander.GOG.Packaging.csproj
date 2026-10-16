@@ -13,7 +13,10 @@
       as a runtime dependency. Anything that runs this library outside a host - the tests - has to
       reference the SDK itself.
     -->
-    <ProjectReference Include="$(LANCommanderRoot)LANCommander.SDK\LANCommander.SDK.csproj" Private="false" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LANCommander.SDK" ExcludeAssets="runtime" />
   </ItemGroup>
 
   <ItemGroup>

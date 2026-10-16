@@ -24,7 +24,7 @@
          library itself is held to having no dependencies at all. -->
     <ProjectReference Include="..\..\src\LANCommander.GOG.Packaging\LANCommander.GOG.Packaging.csproj" />
     <!-- The packaging library leaves the SDK to its host; here, the tests are the host. -->
-    <ProjectReference Include="$(LANCommanderRoot)LANCommander.SDK\LANCommander.SDK.csproj" />
+    <PackageReference Include="LANCommander.SDK" />
   </ItemGroup>
 
 </Project>

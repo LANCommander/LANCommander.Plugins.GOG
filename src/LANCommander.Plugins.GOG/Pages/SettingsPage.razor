@@ -1,6 +1,6 @@
 @page "/Plugins/GOG/Settings"
 @inject GogSettingsStore Store
-@inject IGogStorageLocations StorageLocations
+@inject IStorageLocationProvider StorageLocations
 @inject NotificationService Notifications
 
 <PageHeader Title="GOG" Subtitle="Settings" />
@@ -58,7 +58,7 @@
 
         try
         {
-            var locations = await StorageLocations.GetArchiveLocationsAsync();
+            var locations = await StorageLocations.GetAsync(StorageLocationType.Archive);
 
             _storageItems = [.. _storageItems, .. locations.Select(location => new SelectItem<Guid>(location.Id, location.Path))];
         }

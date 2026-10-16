@@ -1,7 +1,6 @@
 using System.Net.Http.Headers;
 using System.Reflection;
 using LANCommander.Plugins.GOG.Api;
-using LANCommander.Plugins.GOG.Hosting;
 using LANCommander.Plugins.GOG.Jobs;
 using LANCommander.Plugins.GOG.Storage;
 using LANCommander.SDK.Plugins;
@@ -34,10 +33,8 @@ public sealed class GogPlugin : IPlugin
         services.AddSingleton<IServerRouteAssemblyExtension>(new GogRouteAssembly());
         services.AddSingleton<IServerNavigationExtension, GogNavigation>();
 
+        // IPackageImporter and IStorageLocationProvider come from the server
         AddGogServices(services, _ => GogPluginPaths.ForHost());
-
-        services.AddScoped<IGogPackageImporter, ImportRunnerPackageImporter>();
-        services.AddScoped<IGogStorageLocations, HostStorageLocations>();
 
         services.AddHostedService<GogImportWorker>();
     }

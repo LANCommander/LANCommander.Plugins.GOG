@@ -2,11 +2,18 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <!--
-      The host projects referenced through LANCommanderRoot resolve their versions from the host's
-      own Directory.Packages.props, so nothing here has to repeat them. Versions that a plugin
-      dependency shares with the host are kept identical to the host's on purpose.
+      The LANCommander server the plugin is built for. Its packages are released together under
+      the server's version. To build against an unreleased server, pack its SDK,
+      Server.Plugins and Server.UI projects into a folder and pass
+      -p:LANCommanderVersion=<version> -p:RestoreAdditionalProjectSources=<folder>.
     -->
+    <LANCommanderVersion Condition="'$(LANCommanderVersion)' == ''">2.2.0</LANCommanderVersion>
   </PropertyGroup>
+  <ItemGroup Label="Host">
+    <PackageVersion Include="LANCommander.SDK" Version="$(LANCommanderVersion)" />
+    <PackageVersion Include="LANCommander.Server.Plugins" Version="$(LANCommanderVersion)" />
+    <PackageVersion Include="LANCommander.Server.UI" Version="$(LANCommanderVersion)" />
+  </ItemGroup>
   <ItemGroup Label="Runtime">
     <!-- Matches the host. The plugin ships its own copy, but there is no reason for them to differ. -->
     <PackageVersion Include="SharpCompress" Version="0.50.0" />
