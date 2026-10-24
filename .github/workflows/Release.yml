@@ -1,20 +1,23 @@
 name: Release
 
-# Publishes the plugin to NuGet for every published release, prereleases included (vX.Y.Z and
-# vX.Y.Z-suffix tags), and attaches the package to the release so it can also be uploaded to a server
-# by hand. The plugin's own assemblies are Authenticode-signed with Azure Artifact Signing before they
-# are packed; leaving the AZURE_SIGNING_ENDPOINT variable unset skips signing.
+# Publishes the plugin to NuGet for every pushed semver tag, prereleases included (vX.Y.Z and
+# vX.Y.Z-suffix), and attaches the package to the tag's GitHub release so it can also be uploaded to a
+# server by hand. The release is created if the tag doesn't have one yet (marked as a prerelease for
+# suffixed tags). The plugin's own assemblies are Authenticode-signed with Azure Artifact Signing before
+# they are packed; leaving the AZURE_SIGNING_ENDPOINT variable unset skips signing.
 #
 # Needs the NUGET_API_KEY secret, and for signing the AZURE_CLIENT_ID, AZURE_TENANT_ID and
 # AZURE_SUBSCRIPTION_ID secrets and the AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT_NAME and
 # AZURE_SIGNING_CERT_PROFILE_NAME variables, all on the "release" environment.
 
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
 
 permissions:
-  contents: write # attach the package to the release
+  contents: write # create the release and attach the package to it
   id-token: write # OIDC token for Azure Artifact Signing
 
 env:
@@ -31,11 +34,13 @@ jobs:
     outputs:
       publish: ${{ steps.version.outputs.publish }}
       version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
+      # The tag filter is a glob, so the tag is checked against the exact pattern here
       - name: Parse Version
         id: version
         run: |
-          TAG="${{ github.event.release.tag_name }}"
+          TAG="${{ github.ref_name }}"
 
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-.+)?$ ]]; then
             echo "::notice::Tag '$TAG' is not vX.Y.Z or vX.Y.Z-suffix. Skipping publish."
@@ -46,6 +51,7 @@ jobs:
           # The package takes the whole version; the SDK drops the suffix for the assembly version
           echo "publish=true" >> $GITHUB_OUTPUT
           echo "version=${TAG#v}" >> $GITHUB_OUTPUT
+          [[ "$TAG" == *-* ]] && echo "prerelease=true" >> $GITHUB_OUTPUT || echo "prerelease=false" >> $GITHUB_OUTPUT
 
   publish:
     needs: prep
@@ -152,8 +158,24 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Failed to push $($package.Name)" }
           }
 
+      # A release made in the GitHub UI pushes its tag too, so it may already exist by now
       - name: Attach package to release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" (Get-ChildItem ./artifacts -Filter *.nupkg).FullName --clobber
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.prep.outputs.prerelease }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $packages = (Get-ChildItem ./artifacts -Filter *.nupkg).FullName
+
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG $packages --clobber
+          } else {
+            $flags = @('--verify-tag', '--generate-notes', '--title', $env:TAG)
+            if ($env:PRERELEASE -eq 'true') { $flags += '--prerelease' }
+            gh release create $env:TAG $packages @flags
+          }
+          if ($LASTEXITCODE -ne 0) { throw "Failed to attach the package to release $env:TAG" }
