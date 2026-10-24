@@ -62,6 +62,39 @@ public class DownloaderTests : IDisposable
         Assert.Empty(Directory.GetFiles(_directory.Path));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ASizeTheApiRoundedToAWholeMebibyteIsAccepted(bool publishesChecksum)
+    {
+        // GOG's products API lists a 788 KB installer as 1,048,576 bytes.
+        var handler = Serve(_content, publishesChecksum ? Md5(_content) : null);
+
+        var path = await Downloader(handler).DownloadAsync(Resolve, _directory.Path, 1 << 20, verify: true, progress: null, CancellationToken.None);
+
+        Assert.Equal(_content, await File.ReadAllBytesAsync(path));
+    }
+
+    [Fact]
+    public async Task AFileThatNeverMatchesTheChecksumSizeFails()
+    {
+        var handler = Serve(_content, Md5(_content), totalSize: _content.Length + 1);
+
+        await Assert.ThrowsAsync<GogDownloadVerificationException>(() =>
+            Downloader(handler).DownloadAsync(Resolve, _directory.Path, 1 << 20, verify: false, progress: null, CancellationToken.None));
+
+        Assert.Empty(Directory.GetFiles(_directory.Path));
+    }
+
+    [Fact]
+    public async Task AFileThatNeverMatchesAnExactListedSizeFails()
+    {
+        var handler = Serve(_content, md5: null);
+
+        await Assert.ThrowsAsync<GogDownloadVerificationException>(() =>
+            Downloader(handler).DownloadAsync(Resolve, _directory.Path, _content.Length + 1, verify: false, progress: null, CancellationToken.None));
+    }
+
     [Fact]
     public async Task ATransientFailureIsRetried()
     {
@@ -89,9 +122,9 @@ public class DownloaderTests : IDisposable
     private static string Md5(byte[] content) => Convert.ToHexStringLower(MD5.HashData(content));
 
     /// <summary>Serves the file, honouring ranges, and its checksum.</summary>
-    private static ServingHandler Serve(byte[] content, string? md5) => new(content, md5);
+    private static ServingHandler Serve(byte[] content, string? md5, long? totalSize = null) => new(content, md5, totalSize ?? content.Length);
 
-    private sealed class ServingHandler(byte[] content, string? md5) : FakeHttpHandlerBase
+    private sealed class ServingHandler(byte[] content, string? md5, long totalSize) : FakeHttpHandlerBase
     {
         public HttpResponseMessage Respond(HttpRequestMessage request)
         {
@@ -100,7 +133,7 @@ public class DownloaderTests : IDisposable
                     ? FakeHttpHandler.NotFound()
                     : new HttpResponseMessage(HttpStatusCode.OK)
                     {
-                        Content = new StringContent($"""<file name="setup.exe" available="1" md5="{md5}" chunks="1" total_size="{content.Length}"></file>"""),
+                        Content = new StringContent($"""<file name="setup.exe" available="1" md5="{md5}" chunks="1" total_size="{totalSize}"></file>"""),
                     };
 
             var from = (int)(request.Headers.Range?.Ranges.Single().From ?? 0);

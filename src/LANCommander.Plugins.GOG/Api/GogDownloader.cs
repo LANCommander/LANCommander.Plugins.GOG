@@ -53,18 +53,14 @@ public sealed class GogDownloader(HttpClient http, ILogger<GogDownloader> logger
             {
                 await DownloadToAsync(link.Url!, path, progress, cancellationToken);
 
-                var length = new FileInfo(path).Length;
+                var checksum = string.IsNullOrEmpty(link.ChecksumUrl)
+                    ? null
+                    : await ReadChecksumAsync(path, link.ChecksumUrl, cancellationToken);
 
-                if (expectedSize > 0 && length != expectedSize)
-                {
-                    File.Delete(path);
+                CheckSize(path, checksum?.Size ?? 0, expectedSize);
 
-                    throw new GogDownloadVerificationException(
-                        $"{Path.GetFileName(path)} is {length:N0} bytes, but GOG lists it as {expectedSize:N0}.");
-                }
-
-                if (verify && !string.IsNullOrEmpty(link.ChecksumUrl))
-                    await VerifyAsync(path, link.ChecksumUrl, cancellationToken);
+                if (verify && !string.IsNullOrWhiteSpace(checksum?.Md5))
+                    await VerifyAsync(path, checksum.Md5, cancellationToken);
 
                 return path;
             }
@@ -166,27 +162,61 @@ public sealed class GogDownloader(HttpClient http, ILogger<GogDownloader> logger
         File.Move(partial, path, overwrite: true);
     }
 
-    private async Task VerifyAsync(string path, string checksumUrl, CancellationToken cancellationToken)
-    {
-        string? expected;
+    /// <summary>What GOG's checksum XML says about a file.</summary>
+    private sealed record Checksum(string? Md5, long Size);
 
+    private async Task<Checksum?> ReadChecksumAsync(string path, string checksumUrl, CancellationToken cancellationToken)
+    {
         try
         {
             var xml = await http.GetStringAsync(checksumUrl, cancellationToken);
+            var root = XDocument.Parse(xml).Root;
 
-            expected = XDocument.Parse(xml).Root?.Attribute("md5")?.Value;
+            return new Checksum(
+                root?.Attribute("md5")?.Value,
+                long.TryParse(root?.Attribute("total_size")?.Value, out var size) ? size : 0);
         }
         catch (Exception exception) when (exception is HttpRequestException or System.Xml.XmlException)
         {
             // Older products publish no checksum. Nothing to compare against is not a failure.
             logger.LogInformation("No checksum available for {File}: {Message}", Path.GetFileName(path), exception.Message);
 
-            return;
+            return null;
         }
+    }
 
-        if (string.IsNullOrWhiteSpace(expected))
+    /// <summary>
+    /// Checks the file's length against the exact size from the checksum XML when there is one,
+    /// otherwise against the size the products API lists.
+    /// </summary>
+    /// <remarks>
+    /// The products API rounds sizes to whole mebibytes for some files — a 788 KB installer is
+    /// listed as 1,048,576 bytes — so a listed size that is a whole number of mebibytes is only
+    /// held to within one.
+    /// </remarks>
+    private static void CheckSize(string path, long exactSize, long listedSize)
+    {
+        const long MiB = 1 << 20;
+
+        var length = new FileInfo(path).Length;
+
+        var mismatch = exactSize > 0
+            ? length != exactSize
+            : listedSize > 0 && (listedSize % MiB == 0
+                ? Math.Abs(length - listedSize) >= MiB
+                : length != listedSize);
+
+        if (!mismatch)
             return;
 
+        File.Delete(path);
+
+        throw new GogDownloadVerificationException(
+            $"{Path.GetFileName(path)} is {length:N0} bytes, but GOG lists it as {(exactSize > 0 ? exactSize : listedSize):N0}.");
+    }
+
+    private static async Task VerifyAsync(string path, string expected, CancellationToken cancellationToken)
+    {
         await using var stream = File.OpenRead(path);
 
         var actual = Convert.ToHexStringLower(await MD5.HashDataAsync(stream, cancellationToken));
