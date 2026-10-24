@@ -6,7 +6,11 @@ name: Release
 # suffixed tags). The plugin's own assemblies are Authenticode-signed with Azure Artifact Signing before
 # they are packed; leaving the AZURE_SIGNING_ENDPOINT variable unset skips signing.
 #
-# Needs the NUGET_API_KEY secret, and for signing the AZURE_CLIENT_ID, AZURE_TENANT_ID and
+# Publishes through nuget.org Trusted Publishing: NuGet/login trades the job's OIDC token for a one-hour
+# API key, so no NuGet secret is stored. Needs a nuget.org Trusted Publishing policy for this repository,
+# Release.yml and the "release" environment, and the NUGET_USER variable (nuget.org profile name).
+#
+# For signing, needs the AZURE_CLIENT_ID, AZURE_TENANT_ID and
 # AZURE_SUBSCRIPTION_ID secrets and the AZURE_SIGNING_ENDPOINT, AZURE_SIGNING_ACCOUNT_NAME and
 # AZURE_SIGNING_CERT_PROFILE_NAME variables, all on the "release" environment.
 
@@ -18,7 +22,7 @@ on:
 
 permissions:
   contents: write # create the release and attach the package to it
-  id-token: write # OIDC token for Azure Artifact Signing
+  id-token: write # OIDC token for Azure Artifact Signing and NuGet Trusted Publishing
 
 env:
   PROJECT: src/LANCommander.Plugins.GOG/LANCommander.Plugins.GOG.csproj
@@ -143,6 +147,13 @@ jobs:
             Write-Host "$name : Valid ($($signature.SignerCertificate.Subject))"
           }
 
+      # Requested immediately before the push: the key is only valid for an hour
+      - name: NuGet login
+        id: nuget
+        uses: NuGet/login@v1
+        with:
+          user: ${{ vars.NUGET_USER }}
+
       # The glob is expanded here because dotnet nuget push on Windows treats ./artifacts/*.nupkg as a
       # literal path. The .snupkg next to it is pushed automatically.
       - name: Publish to NuGet
@@ -154,7 +165,7 @@ jobs:
           if (-not $packages) { throw "No .nupkg found in ./artifacts" }
 
           foreach ($package in $packages) {
-            dotnet nuget push $package.FullName --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+            dotnet nuget push $package.FullName --api-key ${{ steps.nuget.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
             if ($LASTEXITCODE -ne 0) { throw "Failed to push $($package.Name)" }
           }
 
