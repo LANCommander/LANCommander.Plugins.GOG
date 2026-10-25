@@ -36,7 +36,8 @@ public static class GameManifestMapper
             ManifestVersion = VersionHelper.GetCurrentVersion().ToString(),
             Title = title,
             SortTitle = ToSortTitle(title),
-            Version = Coalesce(manifest.AppVersion, manifest.Gog?.VersionName),
+            // GOG appends its build number, e.g. "2.0b (17798)"; the game goes by the version alone.
+            Version = GogVersion.Clean(Coalesce(manifest.AppVersion, manifest.Gog?.VersionName))!,
             // GOG builds often set the default directory to a code constant only the running
             // installer could resolve, in which case the title is the better name.
             DirectoryName = InstallerNames.PlainName(manifest.DefaultDirectoryName, title),

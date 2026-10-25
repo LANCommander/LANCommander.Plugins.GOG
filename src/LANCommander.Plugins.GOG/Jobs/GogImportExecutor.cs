@@ -54,7 +54,7 @@ public sealed class GogImportExecutor(
             var installer = SelectInstaller(details.Downloads?.Installers ?? [], job.Language)
                             ?? throw new GogImportException(NoInstallerMessage(details));
 
-            reporter.Installer(installer.Name ?? job.Title, installer.Version);
+            reporter.Installer(installer.Name ?? job.Title, GogVersion.Clean(installer.Version));
 
             if (!string.Equals(installer.Language, job.Language, StringComparison.OrdinalIgnoreCase))
                 reporter.Warning(
