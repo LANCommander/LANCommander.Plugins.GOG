@@ -18,37 +18,18 @@ namespace LANCommander.GOG.Tests;
 public class PackagerTests
 {
     [Fact]
-    public void TheShimCannotTerminateTheHereStringItTravelsIn()
+    public void TheInstallScriptNeedsNothingBesideIt()
     {
-        // The install script embeds the module in a single-quoted here-string, which a line
-        // beginning with '@ would end early, silently truncating the shim.
-        var offenders = InnoApi.ModuleText()
-            .Replace("\r\n", "\n")
-            .Split('\n')
-            .Where(line => line.StartsWith("'@", StringComparison.Ordinal))
-            .ToList();
-
-        Assert.Empty(offenders);
-    }
-
-    [Fact]
-    public void TheInstallScriptCarriesItsShimRatherThanImportingOneBesideIt()
-    {
-        var script = Compose(ScriptWith("CURSTEPCHANGED"));
+        var script = Compose(EveryEffect());
 
         // An .lcx script is a lone blob under Scripts/, with no sibling files to import from.
         Assert.DoesNotContain("$PSScriptRoot", script.Contents);
-        Assert.Equal(1, Occurrences(script.Contents, "Import-Module"));
-        Assert.Contains(InnoApi.ModuleFileName, script.Contents);
+        Assert.DoesNotContain("Import-Module", script.Contents);
     }
 
     [PowerShellFact]
     public void TheComposedInstallScriptIsValidPowerShell()
-    {
-        // This is also what settles that embedding the shim in a here-string really holds: a
-        // premature terminator would leave the rest of the module parsing as code.
-        AssertParses(Compose(ScriptWith("CURSTEPCHANGED"), Registry(RegistryRoot.LocalMachine)));
-    }
+        => AssertParses(Compose(EveryEffect(), Registry(RegistryRoot.LocalMachine)));
 
     [PowerShellFact]
     public void TheComposedUninstallScriptIsValidPowerShell()
@@ -66,21 +47,36 @@ public class PackagerTests
     }
 
     [Fact]
-    public void CallsTheStepRoutineWhenTheInstallerDefinesIt()
+    public void TheScriptsChangesComeOutAsPlainPowerShell()
     {
-        var script = Compose(ScriptWith("CURSTEPCHANGED"));
+        var script = Compose(EveryEffect());
 
-        // ssPostInstall is the second member of Inno's TSetupStep.
-        Assert.Contains("CurStepChanged 1", script.Contents);
+        Assert.Contains(@"New-Item -ItemType Directory -Path ($InstallDirectory + '\saves') -Force", script.Contents);
+        Assert.Contains(@"Remove-Item -LiteralPath ($InstallDirectory + '\__support') -Recurse", script.Contents);
+        Assert.Contains(@"Set-IniValue -Path ($InstallDirectory + '\game.ini')", script.Contents);
+        Assert.Contains(@"-Name 'Language' -Type String -Value 'en'", script.Contents);
     }
 
     [Fact]
-    public void LeavesOutTheStepCallWhenTheInstallerDefinesNoSuchRoutine()
+    public void WhatTheScriptLeftOutIsListedAndWarnedAbout()
     {
-        // A registry entry keeps the script from being skipped for having nothing to do.
-        var script = Compose(ScriptWith("INITIALIZESETUP"), Registry(RegistryRoot.CurrentUser));
+        var effects = new ScriptEffects(
+            [new ScriptCreateDirectory(@"{app}\saves")],
+            [new SkippedScriptEffect("DOPOSTINSTALL", "EXEC", "runs a program, which is not carried over")]);
 
-        Assert.DoesNotContain("CurStepChanged 1", script.Contents);
+        var script = Compose(effects);
+
+        Assert.Contains("#   EXEC in DOPOSTINSTALL: runs a program", script.Contents);
+        Assert.Contains(script.Warnings, warning => warning.Contains("left out"));
+    }
+
+    [Fact]
+    public void AFolderConstantBecomesItsEnvironmentLookup()
+    {
+        var script = Compose(new ScriptEffects([new ScriptCreateDirectory(@"{userdocs}\My Games\Test")], []));
+
+        Assert.Contains(@"([Environment]::GetFolderPath('MyDocuments')) + '\My Games\Test'", script.Contents);
+        Assert.Empty(script.Warnings);
     }
 
     [Fact]
@@ -118,10 +114,10 @@ public class PackagerTests
     [Fact]
     public void AnInstallerConstantWithNoStandInIsReportedRatherThanGuessedAt()
     {
-        var entry = Registry(RegistryRoot.CurrentUser) with { ValueData = @"{userdocs}\saves" };
+        var entry = Registry(RegistryRoot.CurrentUser) with { ValueData = @"{group}\Manual.lnk" };
         var script = Compose(null, entry);
 
-        Assert.Contains(script.Warnings, warning => warning.Contains("{userdocs}"));
+        Assert.Contains(script.Warnings, warning => warning.Contains("{group}"));
     }
 
     [Fact]
@@ -329,25 +325,31 @@ public class PackagerTests
         }
     }
 
-    private static ComposedScript Compose(DecompiledScript? script, params RegistryEntry[] registry)
+    private static ComposedScript Compose(ScriptEffects? effects, params RegistryEntry[] registry)
     {
-        var composed = InstallScriptComposer.Compose(Manifest(registry: registry), script, "setup.exe");
+        var composed = InstallScriptComposer.Compose(
+            Manifest(registry: registry), effects ?? ScriptEffects.None, "setup.exe");
 
         Assert.NotNull(composed);
 
         return composed;
     }
 
-    /// <summary>Builds a script carrying one routine of the given name.</summary>
-    private static DecompiledScript ScriptWith(string routineName)
-    {
-        var builder = new IfpsBlobBuilder();
-
-        builder.AddPrimitiveType(Script.Ifps.IfpsBaseType.U8);
-        builder.AddScriptFunction(routineName, "-1", code => code.Return());
-
-        return DecompiledScript.Load(builder.Build());
-    }
+    /// <summary>One of each change an installer's script can carry over.</summary>
+    private static ScriptEffects EveryEffect() => new(
+    [
+        new ScriptRegistryWrite(Registry(RegistryRoot.CurrentUser) with { ValueName = "Language", ValueData = "en" }),
+        new ScriptIniWrite(new IniEntry(@"{app}\game.ini", "Settings", "Language", "en", EntryConditions.None)),
+        new ScriptCreateDirectory(@"{app}\saves"),
+        new ScriptWriteFile(@"{app}\EULA.txt", "It's 'quoted' and $(not) run", Append: false),
+        new ScriptCopyFile(@"{app}.cfg", @"{app}.cfg", FailIfExists: true),
+        new ScriptMoveFile(@"{app}\old.dat", @"{app}
+ew.dat"),
+        new ScriptDeleteFiles(@"{app}\*.tmp"),
+        new ScriptDeleteDirectory(@"{app}\__support", Recursive: true),
+        new ScriptDeleteDirectory(@"{app}\empty", Recursive: false),
+    ],
+    [new SkippedScriptEffect("NOTIFYGALAXY", "SHELLEXEC", "runs a program, which is not carried over")]);
 
     private static RegistryEntry Registry(RegistryRoot root) => new(
         Root: root,

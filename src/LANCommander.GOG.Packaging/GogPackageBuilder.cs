@@ -27,7 +27,8 @@ public sealed record GogPackageOptions
     public bool VerifyChecksums { get; init; } = true;
 
     /// <summary>
-    /// Translate the installer's compiled script into the install script. On by default.
+    /// Carry the registry, INI, and file changes the installer's compiled script makes into the
+    /// install script. On by default.
     /// </summary>
     public bool IncludeScript { get; init; } = true;
 
@@ -128,11 +129,6 @@ public static class GogPackageBuilder
             cancellationToken);
 
         var warnings = scripts.SelectMany(composed => composed.Warnings).Distinct().ToList();
-
-        if (script is not null && script.Unit.StructuredFraction < 1)
-            warnings.Add(
-                $"{script.Unit.StructuredRoutineCount} of {script.Unit.Routines.Count} translated installer " +
-                "routines came out fully structured; review the install script before relying on it.");
 
         logger.LogInformation(
             "Wrote {Output}: {Files} files, {Megabytes:N0} MB, {Actions} action(s), {Scripts} script(s)",

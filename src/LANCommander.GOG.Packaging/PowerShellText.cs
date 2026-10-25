@@ -9,12 +9,32 @@ namespace LANCommander.GOG.Packaging;
 /// Installer strings are arbitrary text that may carry quotes, dollar signs, and Inno Setup
 /// constants such as <c>{app}</c>. Interpolating them into a double-quoted PowerShell string
 /// would let a value execute; everything here goes into single-quoted literals instead, with
-/// <c>{app}</c> spliced back in as the launcher's <c>$InstallDirectory</c>.
+/// <c>{app}</c> spliced back in as the launcher's <c>$InstallDirectory</c> and the common folder
+/// constants as the matching environment lookups.
 /// </remarks>
 public static class PowerShellText
 {
     /// <summary>The variable the launcher hands a script the install directory in.</summary>
     public const string InstallDirectoryVariable = "$InstallDirectory";
+
+    /// <summary>
+    /// The Inno constants that mean the same thing outside the installer, and the PowerShell for
+    /// each. Each expression is parenthesised so that it stays one argument to a cmdlet.
+    /// </summary>
+    private static readonly Dictionary<string, string> Folders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["app"] = InstallDirectoryVariable,
+        ["win"] = "$env:SystemRoot",
+        ["sys"] = "([Environment]::SystemDirectory)",
+        ["sd"] = "$env:SystemDrive",
+        ["userdocs"] = "([Environment]::GetFolderPath('MyDocuments'))",
+        ["mydocs"] = "([Environment]::GetFolderPath('MyDocuments'))",
+        ["commondocs"] = "([Environment]::GetFolderPath('CommonDocuments'))",
+        ["userappdata"] = "$env:APPDATA",
+        ["localappdata"] = "$env:LOCALAPPDATA",
+        ["commonappdata"] = "$env:ProgramData",
+        ["userdesktop"] = "([Environment]::GetFolderPath('Desktop'))",
+    };
 
     /// <summary>Quotes a value as a PowerShell string literal that expands nothing.</summary>
     public static string Literal(string? value)
@@ -22,7 +42,7 @@ public static class PowerShellText
 
     /// <summary>
     /// Renders an installer string as a PowerShell expression, substituting <c>{app}</c> with
-    /// <see cref="InstallDirectoryVariable"/>.
+    /// <see cref="InstallDirectoryVariable"/> and the common folder constants with their lookups.
     /// </summary>
     /// <param name="value">The installer string, with its constants unresolved.</param>
     /// <param name="unresolved">
@@ -91,7 +111,7 @@ public static class PowerShellText
 
             var constant = value[(index + 1)..end];
 
-            if (constant.Equals("app", StringComparison.OrdinalIgnoreCase))
+            if (Folders.TryGetValue(constant, out var folder))
             {
                 if (literal.Length > 0)
                 {
@@ -99,7 +119,7 @@ public static class PowerShellText
                     literal.Clear();
                 }
 
-                parts.Add(InstallDirectoryVariable);
+                parts.Add(folder);
             }
             else
             {

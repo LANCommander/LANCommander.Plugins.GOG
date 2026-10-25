@@ -1,7 +1,6 @@
 using System.Text;
 using LANCommander.GOG.Manifest;
 using LANCommander.GOG.Script;
-using LANCommander.GOG.Script.Emit;
 using LANCommander.SDK.Enums;
 
 namespace LANCommander.GOG.Packaging;
@@ -21,30 +20,23 @@ public sealed record ComposedScript(
     IReadOnlyList<string> Warnings);
 
 /// <summary>
-/// Composes the install script: the registry and INI writes the installer declares, followed by
-/// the installer's own script translated into PowerShell.
+/// Composes the install script: the registry and INI writes the installer declares, and the
+/// registry, INI, and file changes its compiled script makes.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The archive already holds the finished game tree, so nothing here copies files. What is left is
-/// the work Inno Setup would have done around the copy — the declarative registry and INI tables,
-/// and whatever the compiled Pascal script does at <c>ssPostInstall</c>.
+/// The archive already holds the finished game tree, so nothing here copies the game's files.
+/// What is left is the work Inno Setup would have done around the copy — the declarative registry
+/// and INI tables, and whatever the compiled Pascal script leaves behind as installation proceeds.
 /// </para>
 /// <para>
-/// The translated script normally imports its shim module from beside itself, but an
-/// <c>.lcx</c> script is a lone blob under <c>Scripts/</c> with no sibling files and no
-/// <c>$PSScriptRoot</c>. The shim therefore travels inside the script and is written back out at
-/// run time.
+/// The compiled script is not translated whole. <see cref="ScriptEffectExtractor"/> picks out the
+/// calls that change the machine, and each becomes a line of plain PowerShell, so the script
+/// stays short enough to read and needs nothing beside it.
 /// </para>
 /// </remarks>
 public static class InstallScriptComposer
 {
-    /// <summary>Inno's <c>ssPostInstall</c>, the second member of <c>TSetupStep</c>.</summary>
-    private const int PostInstallStep = 1;
-
-    /// <summary>The routine Inno calls as installation reaches each step.</summary>
-    private const string StepRoutine = "CurStepChanged";
-
     /// <summary>
     /// Composes the install script, or returns <see langword="null"/> when there is nothing for
     /// it to do.
@@ -58,28 +50,44 @@ public static class InstallScriptComposer
         InstallerManifest manifest,
         DecompiledScript? script,
         string installerFileName)
+        => Compose(
+            manifest,
+            script is null ? ScriptEffects.None : ScriptEffectExtractor.Extract(script.Unit),
+            installerFileName);
+
+    /// <summary>
+    /// Composes the install script from effects already picked out of the installer's script.
+    /// </summary>
+    public static ComposedScript? Compose(
+        InstallerManifest manifest,
+        ScriptEffects effects,
+        string installerFileName)
     {
         var warnings = new List<string>();
         var unresolved = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var registry = manifest.RegistryEntries.Where(entry => !entry.IsDeletion).ToList();
-        var ini = manifest.IniEntries.Where(entry => entry.Key.Length > 0).ToList();
+        var registry = manifest.RegistryEntries
+            .Where(entry => !entry.IsDeletion)
+            .Concat(effects.Effects.OfType<ScriptRegistryWrite>().Select(write => write.Entry))
+            .Distinct()
+            .ToList();
 
-        var callsStep = script is not null && HasStepRoutine(script);
+        var ini = manifest.IniEntries
+            .Where(entry => entry.Key.Length > 0)
+            .Concat(effects.Effects.OfType<ScriptIniWrite>().Select(write => write.Entry))
+            .Distinct()
+            .ToList();
 
-        if (registry.Count == 0 && ini.Count == 0 && !callsStep)
+        var files = effects.Effects
+            .Where(effect => effect is not ScriptRegistryWrite and not ScriptIniWrite)
+            .ToList();
+
+        if (registry.Count == 0 && ini.Count == 0 && files.Count == 0)
             return null;
 
         var output = new StringBuilder();
 
-        EmitHeader(output, manifest, script, installerFileName, callsStep);
-
-        // The INI writes go through the shim too, so it is needed whenever either half does.
-        if (script is not null || ini.Count > 0)
-        {
-            EmitShim(output);
-            EmitEnvironment(output, manifest);
-        }
+        EmitHeader(output, manifest, installerFileName);
 
         if (registry.Count > 0)
             EmitRegistry(output, registry, unresolved);
@@ -87,52 +95,42 @@ public static class InstallScriptComposer
         if (ini.Count > 0)
             EmitIni(output, ini, unresolved);
 
-        if (script is not null)
-        {
-            EmitBody(output, script);
+        if (files.Count > 0)
+            EmitFiles(output, files, unresolved);
 
-            if (callsStep)
-                EmitStepCall(output);
-        }
+        if (effects.Skipped.Count > 0)
+            EmitSkipped(output, effects.Skipped);
 
         foreach (var constant in unresolved)
             warnings.Add(
                 $"{constant} is an Inno Setup constant with no stand-in outside the installer. " +
                 "It is written into the script as-is.");
 
-        if (script is not null)
-        {
-            var unstructured = script.Unit.Routines.Count(routine => !routine.IsFullyStructured);
+        if (effects.Skipped.Count > 0)
+            warnings.Add(
+                $"{effects.Skipped.Count} change(s) the installer's script makes were left out of the install " +
+                "script; they are listed at its end.");
 
-            if (callsStep && unstructured > 0)
-                warnings.Add(
-                    $"{unstructured} of {script.Unit.Routines.Count} translated routines kept control flow " +
-                    "PowerShell cannot express and throw where the jump was. The install script calls " +
-                    $"{StepRoutine}, so it may stop partway through.");
-        }
-
-        var requiresAdmin = registry.Any(entry => entry.Root == RegistryRoot.LocalMachine);
+        var requiresAdmin =
+            registry.Any(entry => entry.Root is RegistryRoot.LocalMachine or RegistryRoot.ClassesRoot)
+            || ini.Any(entry => MachineWide(entry.Filename))
+            || files.Any(effect => effect switch
+            {
+                ScriptCreateDirectory create => MachineWide(create.Path),
+                ScriptWriteFile write => MachineWide(write.Path),
+                ScriptCopyFile copy => MachineWide(copy.Destination),
+                _ => false,
+            });
 
         return new ComposedScript(ScriptType.Install, output.ToString(), requiresAdmin, warnings);
     }
 
-    /// <summary>
-    /// True when the installer's script implements the routine Inno calls on each setup step.
-    /// </summary>
-    /// <remarks>
-    /// The emitter knows nothing of Inno's lifecycle — to it <c>CurStepChanged</c> is just another
-    /// routine — so recognising it is this tool's job.
-    /// </remarks>
-    public static bool HasStepRoutine(DecompiledScript script)
-        => script.Unit.Routines.Any(routine =>
-            routine.Name.Equals(StepRoutine, StringComparison.OrdinalIgnoreCase));
+    /// <summary>True when a path is somewhere only an administrator can write.</summary>
+    private static bool MachineWide(string path) =>
+        new[] { "{win}", "{sys}", "{sd}", "{commonappdata}", "{commondocs}" }
+            .Any(root => path.StartsWith(root, StringComparison.OrdinalIgnoreCase));
 
-    private static void EmitHeader(
-        StringBuilder output,
-        InstallerManifest manifest,
-        DecompiledScript? script,
-        string installerFileName,
-        bool callsStep)
+    private static void EmitHeader(StringBuilder output, InstallerManifest manifest, string installerFileName)
     {
         output.AppendLine("<#")
             .AppendLine("    Install script generated by the LANCommander GOG plugin.")
@@ -141,109 +139,12 @@ public static class InstallScriptComposer
             .AppendLine($"    Inno Setup:   {manifest.InnoVersion}")
             .AppendLine()
             .AppendLine("    The archive already holds the installed game tree, so this script places no files.")
-            .AppendLine("    It performs the registry and INI writes the installer declares, and then runs the")
-            .AppendLine("    installer's own script.");
-
-        if (script is not null)
-            output.AppendLine()
-                .AppendLine($"    {script.Unit.StructuredRoutineCount} of {script.Unit.Routines.Count} translated " +
-                            "routines came out fully structured.")
-                .AppendLine(callsStep
-                    ? $"    {StepRoutine} is defined, and is called below for ssPostInstall."
-                    : $"    {StepRoutine} is not defined, so nothing calls into the translated script.");
-
-        output.AppendLine()
-            .AppendLine("    Entry conditions the installer attached to these writes are not evaluated: doing so")
-            .AppendLine("    would mean running the installer. Everything it declares is written.")
-            .AppendLine("#>")
-            .AppendLine();
-    }
-
-    /// <summary>
-    /// Writes the shim module out beside the running script and imports it.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// A single-quoted here-string expands nothing, so the module's <c>$script:</c> variables,
-    /// backticks, and quotes all survive verbatim.
-    /// </para>
-    /// <para>
-    /// It is imported as a real module rather than inlined. The shim ends in
-    /// <c>Export-ModuleMember</c>, which throws outside a module, and its <c>Set-StrictMode</c>
-    /// and module state are meant to be scoped to it; inlining would leak strict mode into the
-    /// launcher's session.
-    /// </para>
-    /// </remarks>
-    private static void EmitShim(StringBuilder output)
-    {
-        output.AppendLine("# The Inno Setup shim the translated script runs against. An .lcx script is a lone")
-            .AppendLine("# blob with no sibling files, so the module travels inside it and is written back out.")
-            .AppendLine($"$innoModulePath = Join-Path ([System.IO.Path]::GetTempPath()) '{InnoApi.ModuleFileName}'")
-            .AppendLine("Set-Content -LiteralPath $innoModulePath -Encoding UTF8 -Value @'")
-            .AppendLine(InnoApi.ModuleText().TrimEnd('\r', '\n'))
-            .AppendLine("'@")
-            .AppendLine("Import-Module $innoModulePath -Force")
-            .AppendLine();
-    }
-
-    /// <summary>
-    /// Supplies the constants the translated script expands, mapped onto what the launcher knows.
-    /// </summary>
-    private static void EmitEnvironment(StringBuilder output, InstallerManifest manifest)
-    {
-        var group = InstallerNames.PlainName(manifest.DefaultGroupName, "LANCommander");
-
-        output.AppendLine("# The constants the installer script expands. {src} points at the install directory")
-            .AppendLine("# too, so that a script looking for a file it shipped finds the one already in place.")
-            .AppendLine("$innoTemp = Join-Path ([System.IO.Path]::GetTempPath()) \"lancommander-inno-$([guid]::NewGuid())\"")
-            .AppendLine("$null = New-Item -ItemType Directory -Path $innoTemp -Force")
+            .AppendLine("    It makes the registry and INI writes the installer declares, and the registry, INI,")
+            .AppendLine("    and file changes the installer's own script makes as installation proceeds.")
             .AppendLine()
-            .AppendLine("Initialize-InnoEnvironment -ExtractedRoot $InstallDirectory -Constants @{")
-            .AppendLine("    app      = $InstallDirectory")
-            .AppendLine("    src      = $InstallDirectory")
-            .AppendLine("    tmp      = $innoTemp")
-            .AppendLine($"    group    = {PowerShellText.Literal(group)}")
-            .AppendLine("    win      = $env:SystemRoot")
-            .AppendLine("    sys      = (Join-Path $env:SystemRoot 'System32')")
-            .AppendLine("    pf       = ${env:ProgramFiles}")
-            .AppendLine("    pf32     = ${env:ProgramFiles(x86)}")
-            .AppendLine("    userdocs = [System.Environment]::GetFolderPath('MyDocuments')")
-            .AppendLine("    userappdata = $env:APPDATA")
-            .AppendLine("    localappdata = $env:LOCALAPPDATA")
-            .AppendLine("}")
-            .AppendLine();
-    }
-
-    /// <summary>
-    /// Appends the translated script, less the two preamble lines this script has already done.
-    /// </summary>
-    private static void EmitBody(StringBuilder output, DecompiledScript script)
-    {
-        output.AppendLine("#region Translated from the installer's compiled Pascal script")
-            .AppendLine();
-
-        foreach (var line in script.ToPowerShell().Replace("\r\n", "\n").Split('\n'))
-        {
-            // Strict mode and the module import are set up above, module-scoped and once.
-            if (line.StartsWith("Set-StrictMode ", StringComparison.Ordinal))
-                continue;
-
-            if (line.StartsWith("Import-Module ", StringComparison.Ordinal))
-                continue;
-
-            output.AppendLine(line);
-        }
-
-        output.AppendLine()
-            .AppendLine("#endregion")
-            .AppendLine();
-    }
-
-    private static void EmitStepCall(StringBuilder output)
-    {
-        output.AppendLine($"# Inno's TSetupStep is (ssInstall, ssPostInstall, ssDone), so ssPostInstall is {PostInstallStep}.")
-            .AppendLine("# Only the post-install step is run: installation itself already happened.")
-            .AppendLine($"if (Get-Command {StepRoutine} -ErrorAction SilentlyContinue) {{ {StepRoutine} {PostInstallStep} }}")
+            .AppendLine("    Conditions the installer attached to these changes are not evaluated: doing so")
+            .AppendLine("    would mean running the installer. Everything it declares is applied.")
+            .AppendLine("#>")
             .AppendLine();
     }
 
@@ -252,7 +153,7 @@ public static class InstallScriptComposer
         IReadOnlyList<RegistryEntry> entries,
         ICollection<string> unresolved)
     {
-        output.AppendLine("#region Registry writes the installer declares")
+        output.AppendLine("#region Registry")
             .AppendLine();
 
         foreach (var group in entries.GroupBy(entry => entry.FullKeyPath, StringComparer.OrdinalIgnoreCase))
@@ -329,19 +230,123 @@ public static class InstallScriptComposer
         IReadOnlyList<IniEntry> entries,
         ICollection<string> unresolved)
     {
-        output.AppendLine("#region INI writes the installer declares")
+        output.AppendLine("#region INI files")
+            .AppendLine()
+            .AppendLine("function Set-IniValue {")
+            .AppendLine("    param([string] $Path, [string] $Section, [string] $Key, [string] $Value)")
+            .AppendLine()
+            .AppendLine("    $lines = [System.Collections.Generic.List[string]]::new()")
+            .AppendLine()
+            .AppendLine("    if (Test-Path -LiteralPath $Path) { $lines.AddRange([string[]]@(Get-Content -LiteralPath $Path)) }")
+            .AppendLine("    else { $null = New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force }")
+            .AppendLine()
+            .AppendLine("    $start = -1")
+            .AppendLine("    $end = $lines.Count")
+            .AppendLine()
+            .AppendLine("    for ($i = 0; $i -lt $lines.Count; $i++) {")
+            .AppendLine("        if ($lines[$i].Trim() -match '^\\[(.*)\\]$') {")
+            .AppendLine("            if ($start -ge 0) { $end = $i; break }")
+            .AppendLine("            if ($Matches[1] -eq $Section) { $start = $i }")
+            .AppendLine("        }")
+            .AppendLine("    }")
+            .AppendLine()
+            .AppendLine("    if ($start -lt 0) { $lines.Add(\"[$Section]\"); $lines.Add(\"$Key=$Value\") }")
+            .AppendLine("    else {")
+            .AppendLine("        $line = $start + 1")
+            .AppendLine("        while ($line -lt $end -and $lines[$line] -notmatch \"^\\s*$([regex]::Escape($Key))\\s*=\") { $line++ }")
+            .AppendLine("        if ($line -lt $end) { $lines[$line] = \"$Key=$Value\" } else { $lines.Insert($end, \"$Key=$Value\") }")
+            .AppendLine("    }")
+            .AppendLine()
+            .AppendLine("    Set-Content -LiteralPath $Path -Value $lines")
+            .AppendLine("}")
             .AppendLine();
 
         foreach (var entry in entries)
             output.AppendLine(
-                "$null = InnoSetIniString " +
-                $"{PowerShellText.Argument(entry.Section, unresolved)} " +
-                $"{PowerShellText.Argument(entry.Key, unresolved)} " +
-                $"{PowerShellText.Argument(entry.Value, unresolved)} " +
-                $"{PowerShellText.Argument(entry.Filename, unresolved)}");
+                "Set-IniValue " +
+                $"-Path {PowerShellText.Argument(entry.Filename, unresolved)} " +
+                $"-Section {PowerShellText.Argument(entry.Section, unresolved)} " +
+                $"-Key {PowerShellText.Argument(entry.Key, unresolved)} " +
+                $"-Value {PowerShellText.Argument(entry.Value, unresolved)}");
 
         output.AppendLine()
             .AppendLine("#endregion")
             .AppendLine();
+    }
+
+    private static void EmitFiles(
+        StringBuilder output,
+        IReadOnlyList<ScriptEffect> effects,
+        ICollection<string> unresolved)
+    {
+        output.AppendLine("#region Files")
+            .AppendLine();
+
+        string Argument(string path) => PowerShellText.Argument(path, unresolved);
+        string Expression(string path) => PowerShellText.Expression(path, unresolved);
+
+        foreach (var effect in effects)
+        {
+            switch (effect)
+            {
+                case ScriptCreateDirectory create:
+                    output.AppendLine($"$null = New-Item -ItemType Directory -Path {Argument(create.Path)} -Force");
+                    break;
+
+                case ScriptWriteFile write:
+                    // Inno writes the string's bytes as they are, which Latin-1 reproduces.
+                    output.AppendLine($"$null = New-Item -ItemType Directory -Path (Split-Path -Parent {Argument(write.Path)}) -Force")
+                        .AppendLine(
+                            $"[System.IO.File]::{(write.Append ? "AppendAllText" : "WriteAllText")}(" +
+                            $"{Expression(write.Path)}, {PowerShellText.Literal(write.Contents)}, " +
+                            "[System.Text.Encoding]::GetEncoding(28591))");
+                    break;
+
+                case ScriptCopyFile copy:
+                {
+                    var command =
+                        $"Copy-Item -LiteralPath {Argument(copy.Source)} -Destination {Argument(copy.Destination)} -Force";
+
+                    output.AppendLine(copy.FailIfExists
+                        ? $"if (-not (Test-Path -LiteralPath {Argument(copy.Destination)})) {{ {command} }}"
+                        : $"if (Test-Path -LiteralPath {Argument(copy.Source)}) {{ {command} }}");
+                    break;
+                }
+
+                case ScriptMoveFile move:
+                    output.AppendLine(
+                        $"if (Test-Path -LiteralPath {Argument(move.Source)}) {{ " +
+                        $"Move-Item -LiteralPath {Argument(move.Source)} -Destination {Argument(move.Destination)} -Force }}");
+                    break;
+
+                case ScriptDeleteFiles delete:
+                    // A wildcard is only honoured by -Path; anything else is taken literally.
+                    output.AppendLine(delete.Path.IndexOfAny(['*', '?']) >= 0
+                        ? $"Remove-Item -Path {Argument(delete.Path)} -Force -ErrorAction SilentlyContinue"
+                        : $"Remove-Item -LiteralPath {Argument(delete.Path)} -Force -ErrorAction SilentlyContinue");
+                    break;
+
+                case ScriptDeleteDirectory { Recursive: true } delete:
+                    output.AppendLine($"Remove-Item -LiteralPath {Argument(delete.Path)} -Recurse -Force -ErrorAction SilentlyContinue");
+                    break;
+
+                case ScriptDeleteDirectory delete:
+                    // Remove-Item would prompt over a directory that is not empty; this just fails.
+                    output.AppendLine($"try {{ [System.IO.Directory]::Delete({Expression(delete.Path)}) }} catch {{ }}");
+                    break;
+            }
+        }
+
+        output.AppendLine()
+            .AppendLine("#endregion")
+            .AppendLine();
+    }
+
+    private static void EmitSkipped(StringBuilder output, IReadOnlyList<SkippedScriptEffect> skipped)
+    {
+        output.AppendLine("# Left out of the installer's script:");
+
+        foreach (var entry in skipped)
+            output.AppendLine($"#   {entry.Function} in {entry.Routine}: {entry.Reason.ReplaceLineEndings(" ")}");
     }
 }
