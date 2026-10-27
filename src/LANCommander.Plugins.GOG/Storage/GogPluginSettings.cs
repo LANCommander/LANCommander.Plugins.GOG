@@ -23,4 +23,7 @@ public sealed record GogPluginSettings
 
     /// <summary>Leave each import's scratch directory in place afterwards, for troubleshooting.</summary>
     public bool KeepWorkFiles { get; init; }
+
+    /// <summary>Ids of the server's redistributables every imported game is linked to.</summary>
+    public IReadOnlyList<Guid> Redistributables { get; init; } = [];
 }

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using LANCommander.Plugins.GOG.Api;
 using LANCommander.Plugins.GOG.Storage;
+using LANCommander.Server.Plugins;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -110,4 +111,26 @@ public sealed class InstallerFactAttribute : FactAttribute
         if (SampleInstallers.Find(fileName) is null)
             Skip = $"Set {SampleInstallers.DirectoryVariable} to a directory holding \"{fileName}\" to run this test.";
     }
+}
+
+/// <summary>A server with a fixed set of redistributables, which the plugin only reads.</summary>
+public sealed class FixedRedistributables(IReadOnlyList<RedistributableInfo> redistributables) : IRedistributableProvider
+{
+    public Task<IReadOnlyList<RedistributableInfo>> GetAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult(redistributables);
+
+    public Task<RedistributableInfo?> GetAsync(Guid id, CancellationToken cancellationToken = default)
+        => Task.FromResult(redistributables.FirstOrDefault(redistributable => redistributable.Id == id));
+
+    public Task<RedistributableInfo?> FindAsync(string name, CancellationToken cancellationToken = default)
+        => Task.FromResult(redistributables.FirstOrDefault(redistributable => string.Equals(redistributable.Name, name, StringComparison.OrdinalIgnoreCase)));
+
+    public Task<RedistributableInfo> AddAsync(RedistributableInfo redistributable, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException();
+
+    public Task<RedistributableInfo> UpdateAsync(RedistributableInfo redistributable, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException();
+
+    public Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException();
 }

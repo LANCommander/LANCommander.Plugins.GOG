@@ -1,4 +1,5 @@
 using LANCommander.GOG;
+using LANCommander.GOG.Gog;
 using LANCommander.GOG.Packaging;
 using LANCommander.Plugins.GOG.Api;
 using LANCommander.Plugins.GOG.Storage;
@@ -30,6 +31,7 @@ public sealed class GogImportExecutor(
     GogSettingsStore settings,
     GogImportMapStore imports,
     IPackageImporter importer,
+    IRedistributableProvider redistributables,
     ILogger<GogImportExecutor> logger) : IGogImportExecutor
 {
     public const string Author = "LANCommander.Plugins.GOG";
@@ -71,6 +73,7 @@ public sealed class GogImportExecutor(
             DeleteDirectory(tree);
 
             var previous = imports.Get(job.ProductId);
+            var links = await RedistributablesAsync(options.Redistributables, reporter, cancellationToken);
             var stage = GogPackageStage.Extracting;
 
             var result = await GogPackageBuilder.BuildAsync(
@@ -84,6 +87,7 @@ public sealed class GogImportExecutor(
                     FallbackTitle = job.Title,
                     FallbackProductId = job.ProductId,
                     Author = Author,
+                    Redistributables = links,
                 },
                 logger,
                 new SynchronousProgress<GogPackageProgress>(update =>
@@ -196,6 +200,32 @@ public sealed class GogImportExecutor(
         return paths.FirstOrDefault(path => path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
                ?? throw new GogImportException(
                    $"{installer.Name ?? job.Title} downloaded no installer executable. GOG may be offering this game in a form the plugin cannot read.");
+    }
+
+    /// <summary>
+    /// Looks up the redistributables the settings ask for, dropping any removed from the server
+    /// since they were chosen.
+    /// </summary>
+    private async Task<IReadOnlyList<GogRedistributableLink>> RedistributablesAsync(
+        IReadOnlyList<Guid> ids,
+        IGogImportReporter reporter,
+        CancellationToken cancellationToken)
+    {
+        if (ids.Count == 0)
+            return [];
+
+        var available = await redistributables.GetAsync(cancellationToken);
+        var links = available
+            .Where(redistributable => ids.Contains(redistributable.Id))
+            .Select(redistributable => new GogRedistributableLink(redistributable.Id, redistributable.Name))
+            .ToList();
+
+        if (links.Count < ids.Count)
+            reporter.Warning(ids.Count - links.Count == 1
+                ? "1 redistributable chosen in the settings is no longer on the server and was not linked."
+                : $"{ids.Count - links.Count} redistributables chosen in the settings are no longer on the server and were not linked.");
+
+        return links;
     }
 
     private static string NoInstallerMessage(GogProductDetails details)

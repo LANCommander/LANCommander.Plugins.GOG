@@ -46,7 +46,18 @@ public sealed record GogPackageOptions
 
     /// <summary>Recorded as the creator of every record in the package.</summary>
     public string Author { get; init; } = LcxWriterService.DefaultAuthor;
+
+    /// <summary>
+    /// Redistributables already on the server to link the game to. The server matches each by id,
+    /// or failing that by name, and skips any it does not have.
+    /// </summary>
+    public IReadOnlyList<GogRedistributableLink> Redistributables { get; init; } = [];
 }
+
+/// <summary>A redistributable on the server for the game to be linked to.</summary>
+/// <param name="Id">The redistributable's id on the server.</param>
+/// <param name="Name">Its name, which the server falls back on when the id is not found.</param>
+public sealed record GogRedistributableLink(Guid Id, string Name);
 
 /// <summary>What building a package produced.</summary>
 /// <param name="OutputPath">Where the package was written.</param>
@@ -164,6 +175,9 @@ public static class GogPackageBuilder
                 Provider = GameManifestMapper.ExternalIdProvider,
                 ExternalId = options.FallbackProductId,
             });
+
+        foreach (var redistributable in options.Redistributables)
+            game.Redistributables.Add(new Sdk.Redistributable { Id = redistributable.Id, Name = redistributable.Name });
     }
 
     /// <summary>

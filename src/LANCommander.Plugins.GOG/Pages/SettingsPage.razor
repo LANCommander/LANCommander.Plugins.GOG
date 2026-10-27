@@ -1,6 +1,7 @@
 @page "/Plugins/GOG/Settings"
 @inject GogSettingsStore Store
 @inject IStorageLocationProvider StorageLocations
+@inject IRedistributableProvider Redistributables
 @inject NotificationService Notifications
 
 <PageHeader Title="GOG" Subtitle="Settings" />
@@ -25,6 +26,10 @@
             <Select TValue="Guid" Items="_storageItems" @bind-Value="_model.DefaultStorageLocationId" />
         </FormItem>
 
+        <FormItem Label="Redistributables" Help="Linked to every game an import adds or updates, so they are installed alongside it.">
+            <Select TValue="Guid" Items="_redistributableItems" Multiple Searchable @bind-Values="_model.Redistributables" Placeholder="None" />
+        </FormItem>
+
         <FormItem Label="Verify checksums" Help="Check downloads against the checksums GOG publishes, and extracted files against those the installer records.">
             <Switch @bind-Value="_model.VerifyChecksums" />
         </FormItem>
@@ -43,6 +48,7 @@
     readonly SettingsModel _model = new();
     readonly List<SelectItem<string>> _languageItems = GogFormat.Languages.Select(language => new SelectItem<string>(language.Code, language.Name)).ToList();
     List<SelectItem<Guid>> _storageItems = [new(Guid.Empty, "The server's default")];
+    List<SelectItem<Guid>> _redistributableItems = [];
     bool _saving;
 
     protected override async Task OnInitializedAsync()
@@ -55,6 +61,7 @@
         _model.DefaultStorageLocationId = current.DefaultStorageLocationId ?? Guid.Empty;
         _model.VerifyChecksums = current.VerifyChecksums;
         _model.KeepWorkFiles = current.KeepWorkFiles;
+        _model.Redistributables = current.Redistributables;
 
         try
         {
@@ -65,6 +72,19 @@
         catch (Exception exception)
         {
             Notifications.Error(exception, "Could not read the storage locations");
+        }
+
+        try
+        {
+            var redistributables = await Redistributables.GetAsync();
+
+            _redistributableItems = redistributables.Select(redistributable => new SelectItem<Guid>(redistributable.Id, redistributable.Name)).ToList();
+            // Drop any chosen before that the server no longer has, so they are not saved back
+            _model.Redistributables = _model.Redistributables.Where(id => redistributables.Any(redistributable => redistributable.Id == id)).ToList();
+        }
+        catch (Exception exception)
+        {
+            Notifications.Error(exception, "Could not read the redistributables");
         }
     }
 
@@ -82,6 +102,7 @@
                 DefaultStorageLocationId = _model.DefaultStorageLocationId == Guid.Empty ? null : _model.DefaultStorageLocationId,
                 VerifyChecksums = _model.VerifyChecksums,
                 KeepWorkFiles = _model.KeepWorkFiles,
+                Redistributables = _model.Redistributables.ToList(),
             });
 
             Notifications.Success("GOG settings saved");
@@ -104,5 +125,6 @@
         public Guid DefaultStorageLocationId { get; set; }
         public bool VerifyChecksums { get; set; } = true;
         public bool KeepWorkFiles { get; set; }
+        public IEnumerable<Guid> Redistributables { get; set; } = [];
     }
 }

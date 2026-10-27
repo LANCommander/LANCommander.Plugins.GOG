@@ -27,6 +27,7 @@ public sealed class GogSettingsStore(GogPluginPaths paths)
             MaxConcurrentImports = Math.Clamp(settings.MaxConcurrentImports, 1, 8),
             DefaultLanguage = string.IsNullOrWhiteSpace(settings.DefaultLanguage) ? "en" : settings.DefaultLanguage.Trim(),
             WorkDirectory = string.IsNullOrWhiteSpace(settings.WorkDirectory) ? null : settings.WorkDirectory.Trim(),
+            Redistributables = (settings.Redistributables ?? []).Where(id => id != Guid.Empty).Distinct().ToList(),
         };
 
         lock (_lock)

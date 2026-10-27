@@ -104,7 +104,10 @@ public class ExecutorTests : IDisposable
 
         var importer = new RecordingImporter();
         var reporter = new RecordingReporter();
-        var (executor, accountId, imports, settings) = Build(handler, importer);
+        var redistributable = new RedistributableInfo { Id = Guid.NewGuid(), Name = "DirectX" };
+        var (executor, accountId, imports, settings) = Build(handler, importer, redistributable);
+
+        settings.Save(settings.Current with { Redistributables = [redistributable.Id, Guid.NewGuid()] });
 
         var outcome = await executor.ExecuteAsync(Job(accountId, "1207658827", "Close Combat 2"), reporter, CancellationToken.None);
 
@@ -117,6 +120,10 @@ public class ExecutorTests : IDisposable
         Assert.Single(manifest.Archives);
         Assert.Contains(manifest.ExternalIds, external => external.Provider == "GOG");
         Assert.True(importer.ArchiveEntries > 2000);
+
+        // The redistributable chosen in the settings is linked; the one the server no longer has is not.
+        Assert.Equal((redistributable.Id, redistributable.Name), manifest.Redistributables.Select(linked => (linked.Id, linked.Name)).Single());
+        Assert.Single(reporter.Warnings, warning => warning.Contains("no longer on the server"));
 
         Assert.Equal(
             [GogImportStage.Downloading, GogImportStage.Extracting, GogImportStage.Packaging, GogImportStage.Importing],
@@ -140,7 +147,8 @@ public class ExecutorTests : IDisposable
 
     private (GogImportExecutor Executor, Guid AccountId, GogImportMapStore Imports, GogSettingsStore Settings) Build(
         FakeHttpHandler handler,
-        IPackageImporter importer)
+        IPackageImporter importer,
+        params RedistributableInfo[] redistributables)
     {
         var paths = _directory.PluginPaths;
         var accounts = TestServices.Accounts(paths);
@@ -156,6 +164,7 @@ public class ExecutorTests : IDisposable
             settings,
             imports,
             importer,
+            new FixedRedistributables(redistributables),
             NullLogger<GogImportExecutor>.Instance);
 
         return (executor, account.Id, imports, settings);
@@ -172,11 +181,12 @@ public class ExecutorTests : IDisposable
     private sealed class RecordingReporter : IGogImportReporter
     {
         public List<GogImportStage> Stages { get; } = [];
+        public List<string> Warnings { get; } = [];
 
         public void Stage(GogImportStage stage, string? message = null) => Stages.Add(stage);
         public void Progress(long completed, long total, string? message = null) { }
         public void Installer(string name, string? version) { }
-        public void Warning(string warning) { }
+        public void Warning(string warning) => Warnings.Add(warning);
     }
 
     /// <summary>Opens the package as the server would, and records what it found.</summary>

@@ -30,7 +30,7 @@
                 @if (context.Stage.IsActive() && context.Stage != GogImportStage.Queued)
                 {
                     <Flex Vertical Gap="Gap.None">
-                        <Progress Value="@((context.Progress ?? 0) * 100)" Indeterminate="context.Progress is null" NoValue="context.Progress is null" />
+                        <Progress Value="@((context.Progress ?? 0) * 100)" Indeterminate="context.Progress is null" NoValue />
                         <Typography Secondary Small>@Detail(context)</Typography>
                     </Flex>
                 }
@@ -63,7 +63,7 @@
                 }
                 @if (context.Stage.IsActive())
                 {
-                    <Button Text Small Danger Icon="IconType.X" OnClick="() => Jobs.Cancel(context.Id)">Cancel</Button>
+                    <Button Text Small Danger Icon="IconType.X" title="Cancel" OnClick="() => Jobs.Cancel(context.Id)" />
                 }
                 @if (context.Stage is GogImportStage.Failed or GogImportStage.Cancelled)
                 {

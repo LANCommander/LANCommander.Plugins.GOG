@@ -93,6 +93,7 @@ public class PluginLoadingTests : IDisposable
         GogPlugin.AddGogServices(services, _ => _directory.PluginPaths);
 
         services.AddScoped<IPackageImporter, NoImporter>();
+        services.AddScoped<IRedistributableProvider>(_ => new FixedRedistributables([]));
         services.AddHostedService<GogImportWorker>();
 
         using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });

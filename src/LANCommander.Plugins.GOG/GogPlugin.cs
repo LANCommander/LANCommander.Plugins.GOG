@@ -34,7 +34,7 @@ public sealed class GogPlugin : IPlugin
         services.AddSingleton<IServerRouteAssemblyExtension>(new GogRouteAssembly());
         services.AddSingleton<IServerNavigationExtension, GogNavigation>();
 
-        // IPackageImporter and IStorageLocationProvider come from the server
+        // IPackageImporter, IStorageLocationProvider and IRedistributableProvider come from the server
         AddGogServices(services, _ => GogPluginPaths.ForHost());
 
         services.AddHostedService<GogImportWorker>();
