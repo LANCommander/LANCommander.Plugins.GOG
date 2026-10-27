@@ -1,0 +1,125 @@
+@page "/Plugins/GOG/Upload"
+@implements IDisposable
+@inject GogUploadStore Uploads
+@inject GogImportJobService Jobs
+@inject GogSettingsStore Settings
+@inject IStorageLocationProvider StorageLocations
+@inject NotificationService Notifications
+
+<PageHeader Title="GOG" Subtitle="Import an installer you have already downloaded" />
+
+<PageContent>
+    <GogSectionNav Current="@GogRoutes.Upload" />
+
+    <Flex Vertical Gap="Gap.Medium" Style="max-width: 720px">
+        <Typography Secondary>
+            Upload a GOG offline installer for Windows: the setup .exe, and every .bin file that was downloaded with it.
+            Once all of them are up, import it as you would a game from the library. No linked account is needed.
+        </Typography>
+
+        <Upload @key="_uploadId"
+                @ref="_upload"
+                Action="@GogUploadEndpoints.UploadUrl(_uploadId)"
+                Multiple
+                Accept=".exe,.bin"
+                Text="Click or drag the installer files here"
+                Hint="setup_game.exe, setup_game-1.bin, setup_game-2.bin, ..."
+                OnUploaded="Refresh"
+                OnError="UploadFailed" />
+
+        <Flex Gap="Gap.Small" Wrap>
+            <Select TValue="Guid" Items="_storageItems" @bind-Value="_storageLocationId" aria-label="Storage location" Style="width: 260px" />
+            <Button Primary Icon="IconType.DownloadSimple" OnClick="Import" Disabled="!HasInstaller">Import</Button>
+            <Button Icon="IconType.Trash" OnClick="StartOver" Disabled="_files.Count == 0">Start over</Button>
+        </Flex>
+    </Flex>
+</PageContent>
+
+@code {
+    Upload? _upload;
+    Guid _uploadId = Guid.NewGuid();
+    IReadOnlyList<GogUploadedFile> _files = [];
+    List<SelectItem<Guid>> _storageItems = [];
+    Guid _storageLocationId = Guid.Empty;
+
+    bool HasInstaller => _files.Any(file => file.Name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var locations = await StorageLocations.GetAsync(StorageLocationType.Archive);
+
+            _storageItems = locations.Select(location => new SelectItem<Guid>(location.Id, location.Default ? $"{location.Path} (default)" : location.Path)).ToList();
+            _storageLocationId = locations.FirstOrDefault(location => location.Id == Settings.Current.DefaultStorageLocationId)?.Id
+                                 ?? locations.FirstOrDefault(location => location.Default)?.Id
+                                 ?? locations.FirstOrDefault()?.Id
+                                 ?? Guid.Empty;
+        }
+        catch (Exception exception)
+        {
+            Notifications.Error(exception, "Could not read the storage locations");
+        }
+    }
+
+    void Refresh() => _files = Uploads.Files(_uploadId);
+
+    void UploadFailed(UploadedFile file)
+    {
+        Notifications.Error($"{file.Name} was not uploaded", file.Error);
+
+        Refresh();
+    }
+
+    void Import()
+    {
+        if (_upload?.Files.Any(file => file.Status == UploadFileStatus.Uploading) == true)
+        {
+            Notifications.Warning("Still uploading", "Wait for every file to finish uploading, then import.");
+
+            return;
+        }
+
+        string installer;
+
+        try
+        {
+            installer = Uploads.FindInstaller(_uploadId);
+        }
+        catch (GogUploadException exception)
+        {
+            Notifications.Warning("Nothing to import", exception.Message);
+
+            return;
+        }
+
+        var job = Jobs.Enqueue(GogImportRequest.ForUpload(
+            _uploadId,
+            Path.GetFileNameWithoutExtension(installer),
+            _storageLocationId == Guid.Empty ? null : _storageLocationId));
+
+        Notifications.Success($"Queued {job.Title} for import", action: new NotificationAction("View imports", GogRoutes.Imports));
+
+        // The upload belongs to the import now
+        Reset(discard: false);
+    }
+
+    void StartOver() => Reset(discard: true);
+
+    void Reset(bool discard)
+    {
+        if (discard)
+            Uploads.Discard(_uploadId);
+
+        // A new key replaces the upload control, which abandons anything it was still sending
+        _uploadId = Guid.NewGuid();
+        _files = [];
+    }
+
+    public void Dispose()
+    {
+        // Leaving the page loses the upload: nothing else can reach it to import it
+        if (_files.Count > 0)
+            Uploads.Discard(_uploadId);
+    }
+}

@@ -16,6 +16,9 @@ public interface IGogImportReporter
     /// <summary>Records the installer the import settled on.</summary>
     void Installer(string name, string? version);
 
+    /// <summary>Records which game an uploaded installer turned out to hold.</summary>
+    void Identified(string? productId, string title);
+
     /// <summary>Records something the administrator should look at, without failing the import.</summary>
     void Warning(string warning);
 }
@@ -131,24 +134,23 @@ public sealed class GogImportJobService
     /// <exception cref="InvalidOperationException">The same game is already queued or importing.</exception>
     public GogImportJobSnapshot Enqueue(GogImportRequest request)
     {
-        GogImportJobSnapshot job;
+        var job = new GogImportJobSnapshot
+        {
+            Id = Guid.NewGuid(),
+            AccountId = request.AccountId,
+            ProductId = request.ProductId,
+            Title = request.Title,
+            Language = request.Language,
+            StorageLocationId = request.StorageLocationId,
+            UploadId = request.UploadId,
+            Stage = GogImportStage.Queued,
+            CreatedOn = _time.GetUtcNow(),
+        };
 
         lock (_lock)
         {
-            if (_jobs.Values.Any(entry => entry.Snapshot.ProductId == request.ProductId && entry.Snapshot.Stage.IsActive()))
+            if (_jobs.Values.Any(entry => entry.Snapshot.Duplicates(job) && entry.Snapshot.Stage.IsActive()))
                 throw new InvalidOperationException($"{request.Title} is already queued for import.");
-
-            job = new GogImportJobSnapshot
-            {
-                Id = Guid.NewGuid(),
-                AccountId = request.AccountId,
-                ProductId = request.ProductId,
-                Title = request.Title,
-                Language = request.Language,
-                StorageLocationId = request.StorageLocationId,
-                Stage = GogImportStage.Queued,
-                CreatedOn = _time.GetUtcNow(),
-            };
 
             _jobs[job.Id] = new Entry(job);
 
@@ -217,7 +219,7 @@ public sealed class GogImportJobService
                 return false;
 
             if (_jobs.Values.Any(other => other != entry
-                                          && other.Snapshot.ProductId == entry.Snapshot.ProductId
+                                          && other.Snapshot.Duplicates(entry.Snapshot)
                                           && other.Snapshot.Stage.IsActive()))
                 return false;
 
@@ -311,7 +313,7 @@ public sealed class GogImportJobService
             {
                 Stage = GogImportStage.Resolving,
                 StartedOn = _time.GetUtcNow(),
-                Message = "Looking up installers",
+                Message = entry.Snapshot.UploadId is null ? "Looking up installers" : "Reading the installer",
             };
 
             Save();
@@ -511,6 +513,13 @@ public sealed class GogImportJobService
             {
                 InstallerName = name,
                 InstallerVersion = version,
+            });
+
+        public void Identified(string? productId, string title)
+            => service.Update(id, important: true, entry => entry.Snapshot with
+            {
+                ProductId = productId ?? entry.Snapshot.ProductId,
+                Title = title,
             });
 
         public void Warning(string warning)

@@ -1,5 +1,6 @@
 using LANCommander.Plugins.GOG.Api;
 using LANCommander.Plugins.GOG.Storage;
+using LANCommander.Plugins.GOG.Uploads;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -16,11 +17,17 @@ namespace LANCommander.Plugins.GOG.Jobs;
 public sealed class GogImportWorker(
     GogImportJobService jobs,
     GogSettingsStore settings,
+    GogUploadStore uploads,
     IServiceScopeFactory scopes,
     ILogger<GogImportWorker> logger) : BackgroundService
 {
+    /// <summary>How long an upload no import refers to is kept, in case one is about to.</summary>
+    internal static readonly TimeSpan AbandonedUploadAge = TimeSpan.FromDays(1);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        PruneUploads();
+
         int concurrency;
 
         try
@@ -35,6 +42,25 @@ public sealed class GogImportWorker(
         }
 
         await Task.WhenAll(Enumerable.Range(0, concurrency).Select(_ => ConsumeAsync(stoppingToken)));
+    }
+
+    /// <summary>
+    /// Deletes uploads left behind by imports that have since been forgotten, or that were never
+    /// queued at all.
+    /// </summary>
+    internal void PruneUploads()
+    {
+        try
+        {
+            var pruned = uploads.Prune(jobs.Jobs.Select(job => job.UploadId).OfType<Guid>(), AbandonedUploadAge);
+
+            if (pruned > 0)
+                logger.LogInformation("Deleted {Count} uploaded installer(s) no import needs any more", pruned);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not clear out old GOG uploads");
+        }
     }
 
     private async Task ConsumeAsync(CancellationToken stoppingToken)

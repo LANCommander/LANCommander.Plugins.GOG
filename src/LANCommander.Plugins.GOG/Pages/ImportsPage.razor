@@ -17,7 +17,7 @@
                 <Flex Vertical Gap="Gap.None">
                     <Typography Strong>@context.Title</Typography>
                     <Typography Secondary Small>
-                        @(context.InstallerVersion is { Length: > 0 } version ? $"{version} · " : "")@context.Language · queued <LocalTime Value="context.CreatedOn.UtcDateTime" />
+                        @(context.InstallerVersion is { Length: > 0 } version ? $"{version} · " : "")@(context.UploadId is null ? context.Language : "uploaded") · queued <LocalTime Value="context.CreatedOn.UtcDateTime" />
                     </Typography>
                 </Flex>
             </TemplateColumn>

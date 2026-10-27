@@ -28,17 +28,24 @@ public static class GogImportStageExtensions
 }
 
 /// <summary>What an administrator asked to import.</summary>
-/// <param name="AccountId">The linked account that owns the game.</param>
-/// <param name="ProductId">GOG's id for the game.</param>
-/// <param name="Title">The game's title in the GOG library.</param>
+/// <param name="AccountId">The linked account that owns the game. Empty for an uploaded installer.</param>
+/// <param name="ProductId">GOG's id for the game. Empty for an uploaded installer until it is read.</param>
+/// <param name="Title">The game's title in the GOG library, or the uploaded installer's name.</param>
 /// <param name="Language">Preferred installer language, as GOG codes it (<c>en</c>, <c>de</c>, ...).</param>
 /// <param name="StorageLocationId">Archive storage location to import into, or the default.</param>
+/// <param name="UploadId">The uploaded installer to import, instead of downloading one from GOG.</param>
 public sealed record GogImportRequest(
     Guid AccountId,
     string ProductId,
     string Title,
     string Language,
-    Guid? StorageLocationId);
+    Guid? StorageLocationId,
+    Guid? UploadId = null)
+{
+    /// <summary>Imports an installer an administrator uploaded.</summary>
+    public static GogImportRequest ForUpload(Guid uploadId, string title, Guid? storageLocationId)
+        => new(Guid.Empty, string.Empty, title, string.Empty, storageLocationId, uploadId);
+}
 
 /// <summary>An import as it stands at one moment.</summary>
 public sealed record GogImportJobSnapshot
@@ -49,6 +56,9 @@ public sealed record GogImportJobSnapshot
     public string Title { get; init; } = string.Empty;
     public string Language { get; init; } = "en";
     public Guid? StorageLocationId { get; init; }
+
+    /// <summary>The uploaded installer being imported, when it was not downloaded from GOG.</summary>
+    public Guid? UploadId { get; init; }
 
     public GogImportStage Stage { get; init; }
 
@@ -77,6 +87,15 @@ public sealed record GogImportJobSnapshot
     public DateTimeOffset CreatedOn { get; init; }
     public DateTimeOffset? StartedOn { get; init; }
     public DateTimeOffset? CompletedOn { get; init; }
+
+    /// <summary>
+    /// True when this and <paramref name="other"/> import the same thing: the same upload, or the
+    /// same game from GOG.
+    /// </summary>
+    public bool Duplicates(GogImportJobSnapshot other)
+        => UploadId is { } upload
+            ? upload == other.UploadId
+            : other.UploadId is null && ProductId == other.ProductId;
 }
 
 /// <summary>What a finished import produced.</summary>

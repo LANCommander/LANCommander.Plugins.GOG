@@ -3,6 +3,7 @@ using LANCommander.GOG.Gog;
 using LANCommander.GOG.Packaging;
 using LANCommander.Plugins.GOG.Api;
 using LANCommander.Plugins.GOG.Storage;
+using LANCommander.Plugins.GOG.Uploads;
 using LANCommander.SDK.Enums;
 using LANCommander.Server.Plugins;
 using Microsoft.Extensions.Logging;
@@ -16,20 +17,22 @@ public interface IGogImportExecutor
 }
 
 /// <summary>
-/// Downloads a game's Windows installer from GOG, turns it into a package and imports it.
+/// Downloads a game's Windows installer from GOG, or takes one an administrator uploaded, turns it
+/// into a package and imports it.
 /// </summary>
 /// <remarks>
 /// Each import works in its own directory under the work directory. It needs room for the
 /// installer, the extracted game and the package at once; the installer and the extracted game
 /// are deleted before the import starts, since the server copies the archive again on its way in.
 /// A failed import keeps its downloaded files, so retrying it resumes the download instead of
-/// starting over.
+/// starting over. An uploaded installer stays where it was uploaded until the import succeeds.
 /// </remarks>
 public sealed class GogImportExecutor(
     GogApiClient api,
     GogDownloader downloader,
     GogSettingsStore settings,
     GogImportMapStore imports,
+    GogUploadStore uploads,
     IPackageImporter importer,
     IRedistributableProvider redistributables,
     ILogger<GogImportExecutor> logger) : IGogImportExecutor
@@ -51,28 +54,26 @@ public sealed class GogImportExecutor(
 
         try
         {
-            // Resolve
-            var details = await api.GetProductDownloadsAsync(job.AccountId, job.ProductId, cancellationToken);
-            var installer = SelectInstaller(details.Downloads?.Installers ?? [], job.Language)
-                            ?? throw new GogImportException(NoInstallerMessage(details));
+            string installerPath;
+            var productId = job.ProductId;
+            var title = job.Title;
 
-            reporter.Installer(installer.Name ?? job.Title, GogVersion.Clean(installer.Version));
-
-            if (!string.Equals(installer.Language, job.Language, StringComparison.OrdinalIgnoreCase))
-                reporter.Warning(
-                    $"No {job.Language} installer is offered; imported the {installer.LanguageFull ?? installer.Language} one instead.");
-
-            // Download
-            reporter.Stage(GogImportStage.Downloading, "Downloading installer");
-
-            var installerPath = await DownloadAsync(job, installer, downloads, options.VerifyChecksums, reporter, cancellationToken);
+            if (job.UploadId is { } uploadId)
+            {
+                installerPath = uploads.FindInstaller(uploadId);
+                (productId, title) = Identify(installerPath, job, reporter);
+            }
+            else
+            {
+                installerPath = await DownloadFromGogAsync(job, downloads, options.VerifyChecksums, reporter, cancellationToken);
+            }
 
             // Extract and package
             reporter.Stage(GogImportStage.Extracting, "Extracting game files");
 
             DeleteDirectory(tree);
 
-            var previous = imports.Get(job.ProductId);
+            var previous = string.IsNullOrEmpty(productId) ? null : imports.Get(productId);
             var links = await RedistributablesAsync(options.Redistributables, reporter, cancellationToken);
             var stage = GogPackageStage.Extracting;
 
@@ -84,8 +85,8 @@ public sealed class GogImportExecutor(
                 {
                     VerifyChecksums = options.VerifyChecksums,
                     GameId = previous?.GameId,
-                    FallbackTitle = job.Title,
-                    FallbackProductId = job.ProductId,
+                    FallbackTitle = title,
+                    FallbackProductId = productId,
                     Author = Author,
                     Redistributables = links,
                 },
@@ -121,14 +122,21 @@ public sealed class GogImportExecutor(
 
             var gameId = (await importer.ImportFileAsync(package, job.StorageLocationId, ManifestType.Game, cancellationToken)).RecordId;
 
-            imports.Record(new GogImportRecord
-            {
-                ProductId = job.ProductId,
-                GameId = gameId,
-                Title = result.Game.Title,
-                Version = result.Game.Version,
-                ImportedOn = DateTimeOffset.UtcNow,
-            });
+            // An uploaded installer that names no product cannot be matched to a later import.
+            if (!string.IsNullOrEmpty(productId))
+                imports.Record(new GogImportRecord
+                {
+                    ProductId = productId,
+                    GameId = gameId,
+                    Title = result.Game.Title,
+                    Version = result.Game.Version,
+                    ImportedOn = DateTimeOffset.UtcNow,
+                });
+
+            // An upload is kept until the import succeeds, since unlike a download it cannot be
+            // fetched again for a retry.
+            if (job.UploadId is { } imported && !options.KeepWorkFiles)
+                uploads.Discard(imported);
 
             succeeded = true;
 
@@ -139,6 +147,10 @@ public sealed class GogImportExecutor(
             // Every rejection the installer reader makes - an Inno 6 or RAR-wrapped build, a bzip2
             // or encrypted payload, a missing slice - already explains itself.
             throw new GogImportException($"The installer could not be read: {exception.Message}", exception);
+        }
+        catch (GogUploadException exception)
+        {
+            throw new GogImportException(exception.Message, exception);
         }
         finally
         {
@@ -160,6 +172,48 @@ public sealed class GogImportExecutor(
         return windows.FirstOrDefault(installer => string.Equals(installer.Language, language, StringComparison.OrdinalIgnoreCase))
                ?? windows.FirstOrDefault(installer => string.Equals(installer.Language, "en", StringComparison.OrdinalIgnoreCase))
                ?? windows.FirstOrDefault();
+    }
+
+    /// <summary>Picks the installer GOG offers for the game and downloads it.</summary>
+    private async Task<string> DownloadFromGogAsync(
+        GogImportJobSnapshot job,
+        string directory,
+        bool verify,
+        IGogImportReporter reporter,
+        CancellationToken cancellationToken)
+    {
+        // Resolve
+        var details = await api.GetProductDownloadsAsync(job.AccountId, job.ProductId, cancellationToken);
+        var installer = SelectInstaller(details.Downloads?.Installers ?? [], job.Language)
+                        ?? throw new GogImportException(NoInstallerMessage(details));
+
+        reporter.Installer(installer.Name ?? job.Title, GogVersion.Clean(installer.Version));
+
+        if (!string.Equals(installer.Language, job.Language, StringComparison.OrdinalIgnoreCase))
+            reporter.Warning(
+                $"No {job.Language} installer is offered; imported the {installer.LanguageFull ?? installer.Language} one instead.");
+
+        // Download
+        reporter.Stage(GogImportStage.Downloading, "Downloading installer");
+
+        return await DownloadAsync(job, installer, directory, verify, reporter, cancellationToken);
+    }
+
+    /// <summary>
+    /// Reads which game an uploaded installer holds, so the import can update a game imported from
+    /// it before and the import list can show its name.
+    /// </summary>
+    private static (string ProductId, string Title) Identify(string installerPath, GogImportJobSnapshot job, IGogImportReporter reporter)
+    {
+        using var installer = GogInstaller.Open(installerPath);
+
+        var manifest = installer.Manifest;
+        var title = string.IsNullOrWhiteSpace(manifest.AppName) ? job.Title : manifest.AppName.Trim();
+
+        reporter.Identified(manifest.ProductId, title);
+        reporter.Installer(Path.GetFileName(installerPath), GogVersion.Clean(manifest.AppVersion));
+
+        return (manifest.ProductId ?? string.Empty, title);
     }
 
     private async Task<string> DownloadAsync(

@@ -3,6 +3,7 @@ using System.Net;
 using LANCommander.Plugins.GOG.Api;
 using LANCommander.Plugins.GOG.Jobs;
 using LANCommander.Plugins.GOG.Storage;
+using LANCommander.Plugins.GOG.Uploads;
 using LANCommander.SDK.Enums;
 using LANCommander.SDK.Helpers;
 using LANCommander.Server.Plugins;
@@ -136,6 +137,64 @@ public class ExecutorTests : IDisposable
         Assert.Empty(Directory.EnumerateFileSystemEntries(settings.WorkDirectory));
     }
 
+    [Fact]
+    public async Task AnUploadThatHoldsNoInstallerFailsWithAReason()
+    {
+        var (executor, _, _, settings) = Build(new FakeHttpHandler(_ => FakeHttpHandler.NotFound()), new RecordingImporter());
+        var uploads = new GogUploadStore(settings, NullLogger<GogUploadStore>.Instance);
+        var uploadId = Guid.NewGuid();
+
+        await uploads.SaveAsync(uploadId, "setup_game-1.bin", new MemoryStream([1, 2, 3]), CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<GogImportException>(
+            () => executor.ExecuteAsync(UploadJob(uploadId), new NullReporter(), CancellationToken.None));
+
+        Assert.Contains("No installer has been uploaded", exception.Message);
+
+        // The upload is kept, so the missing file can be added and the import retried.
+        Assert.Single(uploads.Files(uploadId));
+    }
+
+    /// <summary>
+    /// Imports an installer as if an administrator had uploaded it: nothing is asked of GOG, and the
+    /// game is identified from the installer itself.
+    /// </summary>
+    [InstallerFact(SampleInstallers.CloseCombat2)]
+    public async Task AnUploadedInstallerIsPackagedAndImported()
+    {
+        var installer = SampleInstallers.Find(SampleInstallers.CloseCombat2)!;
+        var handler = new FakeHttpHandler(_ => FakeHttpHandler.NotFound());
+        var importer = new RecordingImporter();
+        var reporter = new RecordingReporter();
+        var (executor, _, imports, settings) = Build(handler, importer);
+        var uploads = new GogUploadStore(settings, NullLogger<GogUploadStore>.Instance);
+        var uploadId = Guid.NewGuid();
+
+        await using (var content = File.OpenRead(installer))
+            await uploads.SaveAsync(uploadId, Path.GetFileName(installer), content, CancellationToken.None);
+
+        var outcome = await executor.ExecuteAsync(UploadJob(uploadId), reporter, CancellationToken.None);
+
+        Assert.Empty(handler.Requests);
+        Assert.Equal(importer.GameId, outcome.GameId);
+        Assert.Equal("Close Combat 2", Assert.IsType<Sdk.Game>(importer.Manifest).Title);
+        Assert.Equal("1207658827", reporter.Identity?.ProductId);
+        Assert.Equal([GogImportStage.Extracting, GogImportStage.Packaging, GogImportStage.Importing], reporter.Stages);
+
+        // Remembered under the product the installer names, so a later import from GOG updates it.
+        Assert.Equal(importer.GameId, imports.Get("1207658827")!.GameId);
+
+        // The upload is gone with the rest of the work files.
+        Assert.Empty(Directory.EnumerateFiles(settings.WorkDirectory, "*", SearchOption.AllDirectories));
+    }
+
+    private static GogImportJobSnapshot UploadJob(Guid uploadId) => new()
+    {
+        Id = Guid.NewGuid(),
+        Title = "setup_game",
+        UploadId = uploadId,
+    };
+
     private static GogImportJobSnapshot Job(Guid accountId, string productId = "123", string title = "Test Game") => new()
     {
         Id = Guid.NewGuid(),
@@ -163,6 +222,7 @@ public class ExecutorTests : IDisposable
             new GogDownloader(new HttpClient(handler), NullLogger<GogDownloader>.Instance) { RetryDelay = _ => TimeSpan.Zero },
             settings,
             imports,
+            new GogUploadStore(settings, NullLogger<GogUploadStore>.Instance),
             importer,
             new FixedRedistributables(redistributables),
             NullLogger<GogImportExecutor>.Instance);
@@ -175,6 +235,7 @@ public class ExecutorTests : IDisposable
         public void Stage(GogImportStage stage, string? message = null) { }
         public void Progress(long completed, long total, string? message = null) { }
         public void Installer(string name, string? version) { }
+        public void Identified(string? productId, string title) { }
         public void Warning(string warning) { }
     }
 
@@ -182,10 +243,12 @@ public class ExecutorTests : IDisposable
     {
         public List<GogImportStage> Stages { get; } = [];
         public List<string> Warnings { get; } = [];
+        public (string? ProductId, string Title)? Identity { get; private set; }
 
         public void Stage(GogImportStage stage, string? message = null) => Stages.Add(stage);
         public void Progress(long completed, long total, string? message = null) { }
         public void Installer(string name, string? version) { }
+        public void Identified(string? productId, string title) => Identity = (productId, title);
         public void Warning(string warning) => Warnings.Add(warning);
     }
 

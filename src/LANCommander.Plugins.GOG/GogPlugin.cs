@@ -3,6 +3,7 @@ using System.Reflection;
 using LANCommander.Plugins.GOG.Api;
 using LANCommander.Plugins.GOG.Jobs;
 using LANCommander.Plugins.GOG.Storage;
+using LANCommander.Plugins.GOG.Uploads;
 using LANCommander.SDK.Plugins;
 using LANCommander.Server.Plugins;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,6 +34,7 @@ public sealed class GogPlugin : IPlugin
     {
         services.AddSingleton<IServerRouteAssemblyExtension>(new GogRouteAssembly());
         services.AddSingleton<IServerNavigationExtension, GogNavigation>();
+        services.AddSingleton<IServerEndpointExtension, GogUploadEndpoints>();
 
         // IPackageImporter, IStorageLocationProvider and IRedistributableProvider come from the server
         AddGogServices(services, _ => GogPluginPaths.ForHost());
@@ -64,6 +66,7 @@ public sealed class GogPlugin : IPlugin
         services.AddSingleton<GogSettingsStore>();
         services.AddSingleton(provider => new GogAccountStore(provider.GetRequiredService<GogPluginPaths>()));
         services.AddSingleton<GogImportMapStore>();
+        services.AddSingleton<GogUploadStore>();
         services.AddSingleton<GogImportJobService>(provider => new GogImportJobService(
             provider.GetRequiredService<GogPluginPaths>(),
             provider.GetRequiredService<ILogger<GogImportJobService>>()));
@@ -101,6 +104,7 @@ public static class GogRoutes
 {
     public const string Library = "/Plugins/GOG";
     public const string Imports = "/Plugins/GOG/Imports";
+    public const string Upload = "/Plugins/GOG/Upload";
     public const string Accounts = "/Plugins/GOG/Accounts";
     public const string Settings = "/Plugins/GOG/Settings";
 }

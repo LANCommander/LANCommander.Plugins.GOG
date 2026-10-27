@@ -1,5 +1,6 @@
 using LANCommander.Plugins.GOG.Jobs;
 using LANCommander.Plugins.GOG.Storage;
+using LANCommander.Plugins.GOG.Uploads;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -35,6 +36,37 @@ public class JobServiceTests : IDisposable
         jobs.Enqueue(Request());
 
         Assert.Throws<InvalidOperationException>(() => jobs.Enqueue(Request()));
+    }
+
+    [Fact]
+    public void UploadsAreToldApartByUploadRatherThanProduct()
+    {
+        var jobs = Service();
+        var upload = Guid.NewGuid();
+
+        // Neither names a product yet, nor clashes with an import from GOG.
+        jobs.Enqueue(GogImportRequest.ForUpload(upload, "setup_one", null));
+        jobs.Enqueue(GogImportRequest.ForUpload(Guid.NewGuid(), "setup_two", null));
+        jobs.Enqueue(new GogImportRequest(Guid.NewGuid(), "", "Test Game", "en", null));
+
+        Assert.Throws<InvalidOperationException>(() => jobs.Enqueue(GogImportRequest.ForUpload(upload, "setup_one", null)));
+    }
+
+    [Fact]
+    public void AnUploadTakesTheNameOfTheGameItHolds()
+    {
+        var jobs = Service();
+        var job = jobs.Enqueue(GogImportRequest.ForUpload(Guid.NewGuid(), "setup_close_combat_2", null));
+
+        jobs.TryStart(job.Id, CancellationToken.None);
+        jobs.ReporterFor(job.Id).Identified("1207658827", "Close Combat 2");
+
+        var identified = jobs.Get(job.Id)!;
+
+        Assert.Equal(("1207658827", "Close Combat 2"), (identified.ProductId, identified.Title));
+
+        // And keeps it across a restart.
+        Assert.Equal(job.UploadId, Service().Get(job.Id)!.UploadId);
     }
 
     [Fact]
@@ -219,9 +251,12 @@ public class WorkerTests : IDisposable
             .AddScoped<IGogImportExecutor>(_ => new DelegateExecutor(execute))
             .BuildServiceProvider();
 
+        var settings = new GogSettingsStore(_directory.PluginPaths);
+
         var worker = new GogImportWorker(
             jobs,
-            new GogSettingsStore(_directory.PluginPaths),
+            settings,
+            new GogUploadStore(settings, NullLogger<GogUploadStore>.Instance),
             provider.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<GogImportWorker>.Instance);
 

@@ -31,6 +31,13 @@ is flagged and has to be linked again.
 archive storage location, select games, and import them. A game that was imported before is
 updated with a new version rather than added again.
 
+**Upload.** Imports an offline installer you have already downloaded, with no linked account
+needed. Upload the setup `.exe` and every `.bin` file that came with it, choose the storage
+location, and import. The game is identified from the installer, so one imported from GOG before
+is updated rather than added again. An uploaded installer is kept until its import succeeds, so a
+failed import can be retried; uploads nothing refers to any more are deleted a day later, when the
+server next starts.
+
 **Imports.** Shows each import's stage (looking up, downloading, extracting, packaging,
 importing), with progress and download speed, and lets you cancel and retry. A failed import keeps
 its downloaded installer, so retrying it resumes the download. History survives restarts. An
