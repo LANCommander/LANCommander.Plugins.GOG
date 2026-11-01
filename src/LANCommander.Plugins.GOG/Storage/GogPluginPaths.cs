@@ -1,4 +1,4 @@
-using LANCommander.SDK;
+using LANCommander.SDK.Plugins;
 
 namespace LANCommander.Plugins.GOG.Storage;
 
@@ -6,13 +6,13 @@ namespace LANCommander.Plugins.GOG.Storage;
 /// Where the plugin keeps its own state.
 /// </summary>
 /// <remarks>
-/// The plugin's drop-in folder is replaced wholesale on every deploy, so nothing the plugin writes
-/// lives there. Its state sits under the host's data directory instead, beside the server's own.
+/// Everything lives in the <c>Data</c> folder inside the plugin's own folder, which the server keeps
+/// when it installs an update over the plugin and deletes when the plugin is uninstalled.
 /// </remarks>
 public sealed class GogPluginPaths(string root)
 {
-    /// <summary>Paths rooted in the host's data directory.</summary>
-    public static GogPluginPaths ForHost() => new(AppPaths.GetConfigPath("PluginData", "GOG"));
+    /// <summary>Paths in the plugin's <c>Data</c> folder.</summary>
+    public static GogPluginPaths ForHost() => new(PluginPaths.GetDataDirectory<GogPluginPaths>());
 
     public string Root { get; } = Path.GetFullPath(root);
 
