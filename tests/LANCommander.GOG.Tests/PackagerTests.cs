@@ -170,7 +170,7 @@ public class PackagerTests
 
         Assert.Equal(2, actions.Count);
 
-        var primary = Assert.Single(actions, action => action.IsPrimaryAction);
+        var primary = Assert.Single(actions, action => action.Type == ActionType.Primary);
 
         Assert.Equal("Launch", primary.Name);
         Assert.Equal("game.exe", primary.Path);
@@ -239,7 +239,7 @@ public class PackagerTests
 
         Assert.Equal("Play Some Game", action.Name);
         Assert.Equal(@"game.exe", action.Path);
-        Assert.True(action.IsPrimaryAction);
+        Assert.Equal(ActionType.Primary, action.Type);
     }
 
     [Fact]
@@ -271,7 +271,7 @@ public class PackagerTests
         var action = Assert.Single(round.Actions);
 
         Assert.Equal("Launch", action.Name);
-        Assert.True(action.IsPrimaryAction);
+        Assert.Equal(ActionType.Primary, action.Type);
         Assert.Equal(RuntimePlatform.Windows, action.Platforms);
     }
 

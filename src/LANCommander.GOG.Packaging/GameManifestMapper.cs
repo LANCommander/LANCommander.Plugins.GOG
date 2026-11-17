@@ -120,7 +120,7 @@ public static class GameManifestMapper
                 Path = task.Path!,
                 Arguments = task.Arguments ?? string.Empty,
                 WorkingDirectory = Coalesce(task.WorkingDirectory, "{InstallDir}"),
-                IsPrimaryAction = task.IsPrimary,
+                Type = task.IsPrimary ? ActionType.Primary : ActionType.Secondary,
                 SortOrder = actions.Count,
                 Platforms = RuntimePlatform.Windows,
             });
@@ -157,7 +157,7 @@ public static class GameManifestMapper
                 WorkingDirectory = string.IsNullOrWhiteSpace(shortcut.WorkingDirectory)
                     ? "{InstallDir}"
                     : shortcut.WorkingDirectory,
-                IsPrimaryAction = actions.Count == 0,
+                Type = actions.Count == 0 ? ActionType.Primary : ActionType.Secondary,
                 SortOrder = actions.Count,
                 Platforms = RuntimePlatform.Windows,
             });
